@@ -18,4 +18,4 @@ jobs:
           node-version: 22
       - run: npm test
       - run: npm pack --dry-run
-      - run: npx -y opencode-ai@latest --version
+      - run: npm exec --yes --package=opencode-ai@1.18.30 -- sh -c 'OPENCODE_RUNTIME_E2E=1 npm run test:opencode'

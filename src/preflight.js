@@ -6,6 +6,11 @@ function git(cwd, args) {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
+function configuredDefaultBranch(cwd) {
+  try { return git(cwd, ["config", "--get", "opencode-ruby-upgrader.defaultBranch"]); }
+  catch { return undefined; }
+}
+
 export function inspectWorktree(cwd = process.cwd()) {
   try {
     try { git(cwd, ["--version"]); }
@@ -20,13 +25,11 @@ export function inspectWorktree(cwd = process.cwd()) {
     const branch = git(cwd, ["branch", "--show-current"]);
     const sha = git(cwd, ["rev-parse", "HEAD"]);
     const dirty = Boolean(git(cwd, ["status", "--porcelain"]));
-    const defaultBranch = (() => {
-      try { return git(cwd, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]).replace(/^origin\//, ""); }
-      catch { return undefined; }
-    })();
+    const defaultBranch = configuredDefaultBranch(cwd);
     if (!linkedWorktree) return { ok: false, reason: "primary-checkout", root, branch, sha, defaultBranch };
     if (!branch) return { ok: false, reason: "detached-head", root, sha, defaultBranch };
-    if (defaultBranch && branch === defaultBranch || ["main", "master"].includes(branch)) return { ok: false, reason: "default-branch", root, branch, sha, defaultBranch };
+    if (!defaultBranch) return { ok: false, reason: "default-branch-unconfigured", root, branch, sha };
+    if (branch === defaultBranch) return { ok: false, reason: "default-branch", root, branch, sha, defaultBranch };
     if (dirty) return { ok: false, reason: "dirty-worktree", root, branch, sha, defaultBranch };
     return { ok: true, mode: "linked-worktree", root, branch, sha, gitDir, commonDir };
   } catch (error) {
@@ -39,6 +42,8 @@ export function setupInstructions(result) {
   const repo = result.root ? path.basename(result.root) : "your-repository";
   return [
     "Ruby upgrades run only in a user-created linked Git worktree.",
+    "Configure the repository default branch before starting:",
+    "  git config opencode-ruby-upgrader.defaultBranch <default-branch>",
     "From your primary checkout, create a branch and linked worktree yourself:",
     `  git branch ruby-upgrade/ruby-<target>`,
     `  git worktree add ../${repo}-ruby-<target> ruby-upgrade/ruby-<target>`,

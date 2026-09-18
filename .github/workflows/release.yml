@@ -19,6 +19,8 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
       - run: npm test
+      - run: test "v$(node -p \"require('./package.json').version\")" = "$GITHUB_REF_NAME"
+      - run: npm exec --yes --package=opencode-ai@1.18.30 -- sh -c 'OPENCODE_RUNTIME_E2E=1 npm run test:opencode'
       - run: npm pack --dry-run
       - run: npm publish --provenance
         env:
