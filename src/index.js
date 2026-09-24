@@ -5,8 +5,10 @@ import { fileURLToPath } from "node:url";
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function readAgentPrompt() {
+  const cli = `node ${path.join(packageRoot, "bin", "opencode-ruby-upgrader.mjs")}`;
   return fs.readFileSync(path.join(packageRoot, "agents", "ruby-upgrade.md"), "utf8")
     .replace(/^---[\s\S]*?---\s*/m, "")
+    .replaceAll("opencode-ruby-upgrader ", `${cli} `)
     .trim();
 }
 
@@ -53,11 +55,14 @@ export default async function RubyUpgradePlugin() {
               "bundle exec rake db:*": "deny",
                 "bin/rails test*": "ask",
                 "./bin/rails test*": "ask",
-                "bin/rails app:update": "ask",
-              "ruby --version*": "allow",
-              "opencode-ruby-upgrader preflight*": "allow",
+               "bin/rails app:update": "ask",
+               "ruby --version*": "allow",
+               [`node ${path.join(packageRoot, "bin", "opencode-ruby-upgrader.mjs")} preflight*`]: "allow",
+               [`node ${path.join(packageRoot, "bin", "opencode-ruby-upgrader.mjs")} prepare-target-runtime --ruby *`]: "ask",
+               "opencode-ruby-upgrader preflight*": "allow",
                 "opencode-ruby-upgrader begin --target *": "ask",
                 "opencode-ruby-upgrader begin-rails-bridge --ruby-report *": "ask",
+                "opencode-ruby-upgrader prepare-target-runtime --ruby *": "ask",
               "opencode-ruby-upgrader status --report *": "allow",
                "opencode-ruby-upgrader transition --report *": "ask",
               "opencode-ruby-upgrader inventory": "allow",
@@ -70,8 +75,11 @@ export default async function RubyUpgradePlugin() {
                 "opencode-ruby-upgrader record-iteration --report *": "ask",
                 "opencode-ruby-upgrader record-rails-iteration --report *": "ask",
                 "opencode-ruby-upgrader record-executed-iteration --report *": "ask",
-                "opencode-ruby-upgrader record-executed-rails-iteration --report *": "ask",
-                "opencode-ruby-upgrader commit-hop --report *": "ask",
+                 "opencode-ruby-upgrader record-executed-rails-iteration --report *": "ask",
+                 "opencode-ruby-upgrader discard-pending-app-update --report *": "ask",
+                 "opencode-ruby-upgrader discard-last-rails-iteration --report *": "ask",
+                 "opencode-ruby-upgrader record-dependency-review --report *": "ask",
+                 "opencode-ruby-upgrader commit-hop --report *": "ask",
                 "opencode-ruby-upgrader commit-rails-hop --report *": "ask",
                "opencode-ruby-upgrader resume --report *": "ask",
                "opencode-ruby-upgrader release-lock --report *": "ask",

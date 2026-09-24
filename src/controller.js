@@ -21,7 +21,11 @@ const git = (root, args) => execFileSync("git", args, { cwd: root, encoding: "ut
 const minorNumber = (value) => { const [major, minor] = series(value).split(".").map(Number); return major * 1000 + minor; };
 const railsMinorNumber = (value) => { const [major, minor] = series(value).split(".").map(Number); return major * 1000 + minor; };
 const contiguousRailsHop = (from, to) => railsMinorNumber(to) === railsMinorNumber(from) + 1 || (Number(to.split(".")[0]) === Number(from.split(".")[0]) + 1 && Number(to.split(".")[1]) === 0);
-const contiguousRubyHop = (from, to) => minorNumber(to) === minorNumber(from) + 1;
+const rubyMajorBoundaries = new Map([[2, 7], [3, 4]]);
+const contiguousRubyHop = (from, to) => {
+  const [fromMajor, fromMinor] = series(from).split(".").map(Number); const [toMajor, toMinor] = series(to).split(".").map(Number);
+  return minorNumber(to) === minorNumber(from) + 1 || (toMajor === fromMajor + 1 && toMinor === 0 && rubyMajorBoundaries.get(fromMajor) === fromMinor);
+};
 const requiredRisksFor = (supplyChain, gitCapabilities) => [
   ...(supplyChain.privateSources.length ? ["private-dependency-sources"] : []),
   ...(gitCapabilities.shallow ? ["shallow-clone"] : []), ...(gitCapabilities.sparseCheckout ? ["sparse-checkout"] : []),
@@ -95,7 +99,7 @@ export function recordRiskDecision({ root = process.cwd(), reportPath, risk, dec
 
 export function recordFrameworkBridge({ root = process.cwd(), reportPath, rubyFrom, rubyTo, railsFrom, railsTo, rationale, citations }) {
   const run = readRun(root, reportPath); assertRunLock(root, reportPath, run.lockNonce);
-  if (run.phase !== "research_complete") throw new Error("Record a Rails compatibility bridge only after research is complete and before a blocked Ruby hop.");
+  if (!["research_complete", "committed"].includes(run.phase)) throw new Error("Record a Rails compatibility bridge only after research or a committed Ruby checkpoint and before a blocked Ruby hop.");
   if (run.frameworkBridge) throw new Error("This run already has an approved Rails compatibility bridge; complete it in a separately scoped Rails migration.");
   if (![rubyFrom, rubyTo].every((version) => rubyVersion.test(version)) || ![railsFrom, railsTo].every((version) => railsVersion.test(version))) throw new Error("A Rails compatibility bridge requires Ruby and Rails from/to versions.");
   if (series(rubyFrom) !== series(run.iterations.at(-1)?.to ?? run.research.ladder[0]) || series(rubyTo) !== series(run.research.ladder[run.research.ladder.findIndex((version) => series(version) === series(rubyFrom)) + 1])) throw new Error("Rails compatibility bridge must describe the next researched Ruby hop.");
@@ -160,6 +164,39 @@ export function recordExecutedRailsIteration({ root = process.cwd(), reportPath,
   delete recorded.pendingAppUpdate;
   writeRun(root, reportPath, recorded);
   return recorded;
+}
+
+export function discardPendingRailsAppUpdate({ root = process.cwd(), reportPath, reason }) {
+  if (!reason?.trim()) throw new Error("Discarding app:update evidence requires a review reason.");
+  const run = readRun(root, reportPath); assertRunLock(root, reportPath, run.lockNonce);
+  if (run.reportType !== "rails_bridge" || !run.pendingAppUpdate) throw new Error("No pending Rails app:update receipt exists for this bridge.");
+  run.discardedAppUpdates = [...(run.discardedAppUpdates ?? []), { receipt: run.pendingAppUpdate, reason: reason.trim(), discardedAt: new Date().toISOString() }];
+  delete run.pendingAppUpdate;
+  run.summary = [...run.summary, `Discarded a reviewed app:update result: ${reason.trim()}`];
+  writeRun(root, reportPath, run); return run;
+}
+
+export function discardLastRailsIteration({ root = process.cwd(), reportPath, reason }) {
+  if (!reason?.trim()) throw new Error("Discarding a recorded Rails iteration requires a review reason.");
+  const run = readRun(root, reportPath); assertRunLock(root, reportPath, run.lockNonce);
+  if (run.reportType !== "rails_bridge" || run.phase !== "hop_validated" || run.pendingAppUpdate) throw new Error("Discard the latest validated, uncommitted Rails iteration only while the bridge hop is validated with no pending app:update.");
+  const iteration = run.iterations.at(-1);
+  if (!iteration || iteration.checkpointSha) throw new Error("There is no validated, uncommitted Rails iteration to discard.");
+  run.discardedIterations = [...(run.discardedIterations ?? []), { iteration, reason: reason.trim(), discardedAt: new Date().toISOString() }];
+  run.iterations = run.iterations.slice(0, -1);
+  run.phase = run.iterations.length ? "committed" : "research_complete";
+  run.summary = [...run.summary, `Discarded the latest validated Rails iteration (${iteration.from} -> ${iteration.to}) to re-validate the hop: ${reason.trim()}`];
+  writeRun(root, reportPath, run); return run;
+}
+
+export function recordDependencyReview({ root = process.cwd(), reportPath, compatibility, licenses }) {
+  if (!compatibility?.trim() || !licenses?.trim()) throw new Error("Dependency review requires compatibility and license findings.");
+  const run = readRun(root, reportPath); assertRunLock(root, reportPath, run.lockNonce);
+  const iteration = run.iterations?.at(-1);
+  if (run.phase !== "hop_validated" || !iteration || iteration.checkpointSha) throw new Error("Record dependency review only for the latest validated, uncommitted hop.");
+  iteration.dependencyReview = { completed: true, compatibility: compatibility.trim(), licenses: licenses.trim(), reviewedAt: new Date().toISOString() };
+  run.summary = [...run.summary, "Recorded dependency compatibility and license review for the validated hop."];
+  writeRun(root, reportPath, run); return run;
 }
 
 function validRailsReviewForExecution(review, receipt) { return review?.command === "bin/rails app:update" && review.receiptId === receipt.id && review.executedAt === receipt.startedAt && review.worktree?.diffSha256 === receipt.worktree.diffSha256 && !Number.isNaN(Date.parse(review.reviewedAt ?? "")) && Date.parse(review.reviewedAt) >= Date.parse(receipt.finishedAt); }

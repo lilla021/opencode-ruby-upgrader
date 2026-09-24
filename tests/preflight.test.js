@@ -24,6 +24,9 @@ test("blocks a primary checkout and accepts a linked worktree", (t) => {
   const worktree = `${root}-worktree`;
   git(root, ["worktree", "add", "-b", "ruby-upgrade/ruby-3.4", worktree]);
   assert.equal(inspectWorktree(worktree).ok, true);
+  fs.mkdirSync(path.join(worktree, ".ruby-upgrades", "runs"), { recursive: true });
+  fs.writeFileSync(path.join(worktree, ".ruby-upgrades", "runs", "run.json"), "{}\n");
+  assert.equal(inspectWorktree(worktree).ok, true);
   fs.writeFileSync(path.join(worktree, "uncommitted.txt"), "nope\n");
   assert.equal(inspectWorktree(worktree).reason, "dirty-worktree");
 });

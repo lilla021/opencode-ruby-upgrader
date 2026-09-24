@@ -3,16 +3,17 @@ import { inspectGitCapabilities, inspectWorktree, setupInstructions } from "../s
 import { startDashboard } from "../src/dashboard.js";
 import { commitValidatedHop, commitValidatedRailsHop, CommitGateError } from "../src/commit-hop.js";
 import { acquireRunLock, readRun, releaseRunLock, RunStateError } from "../src/run-state.js";
-import { beginRailsBridgeRun, beginRun, recordExecutedIteration, recordExecutedRailsIteration, recordFrameworkBridge, recordRailsResearch, recordResearch, recordRiskDecision, resumeRun, runStatus, transitionRun } from "../src/controller.js";
+import { beginRailsBridgeRun, beginRun, discardLastRailsIteration, discardPendingRailsAppUpdate, recordDependencyReview, recordExecutedIteration, recordExecutedRailsIteration, recordFrameworkBridge, recordRailsResearch, recordResearch, recordRiskDecision, resumeRun, runStatus, transitionRun } from "../src/controller.js";
 import { inventoryProject } from "../src/inventory.js";
 import { inspectSupplyChain } from "../src/supply-chain.js";
+import { prepareTargetRuntime } from "../src/target-runtime.js";
 
 const [command, ...args] = process.argv.slice(2);
 const option = (name) => { const index = args.indexOf(name); return index >= 0 ? args[index + 1] : undefined; };
 const options = (name) => args.flatMap((argument, index) => argument === name && args[index + 1] ? [args[index + 1]] : []);
 const reportOption = () => option("--report");
 const citation = (value) => { const [title, url] = (value ?? "").split("|"); return { title, url }; };
-const usage = "Usage: opencode-ruby-upgrader <preflight|dashboard|begin|begin-rails-bridge|status|transition|record-research|record-rails-research|record-risk|record-framework-bridge|record-executed-iteration|record-executed-rails-iteration|inventory|supply-chain|git-capabilities|commit-hop|commit-rails-hop|resume|release-lock> [--help]";
+const usage = "Usage: opencode-ruby-upgrader <preflight|dashboard|begin|begin-rails-bridge|prepare-target-runtime|status|transition|record-research|record-rails-research|record-risk|record-framework-bridge|record-executed-iteration|record-executed-rails-iteration|discard-pending-app-update|record-dependency-review|inventory|supply-chain|git-capabilities|commit-hop|commit-rails-hop|resume|release-lock> [--help]";
 if (command === "help" || args.includes("--help")) {
   console.log(`${usage}\n\nUse status --summary for a concise report view. release-lock is stale-session recovery only and requires --force.`);
 } else if (command === "preflight") {
@@ -32,6 +33,11 @@ if (command === "help" || args.includes("--help")) {
 } else if (command === "begin-rails-bridge") {
   try { console.log(JSON.stringify(beginRailsBridgeRun({ rubyReportPath: option("--ruby-report"), dryRun: args.includes("--dry-run"), stopAfterHop: args.includes("--stop-after-hop"), allowNonGit: args.includes("--allow-non-git") }), null, 2)); }
   catch (error) { console.error(`Rails bridge start blocked: ${error.message}`); process.exitCode = 1; }
+} else if (command === "prepare-target-runtime") {
+  try {
+    if (!option("--ruby") || args.some((argument) => !["--ruby", "--report", option("--ruby"), option("--report")].includes(argument))) throw new Error("Usage: prepare-target-runtime --ruby <x.y.z> [--report .ruby-upgrades/runs/<run>.json]");
+    console.log(JSON.stringify(prepareTargetRuntime({ ruby: option("--ruby"), reportPath: option("--report") }), null, 2));
+  } catch (error) { console.error(`Target runtime preparation blocked: ${error.message}`); process.exitCode = 1; }
 } else if (command === "status") {
   try {
     const run = runStatus({ reportPath: option("--report") });
@@ -63,6 +69,15 @@ if (command === "help" || args.includes("--help")) {
 } else if (command === "record-executed-rails-iteration") {
   try { console.log(JSON.stringify(recordExecutedRailsIteration({ reportPath: reportOption(), iteration: JSON.parse(option("--json") ?? ""), testValidationCommandId: option("--validation") }), null, 2)); }
   catch (error) { console.error(`Executed Rails validation blocked: ${error.message}`); process.exitCode = 1; }
+} else if (command === "discard-pending-app-update") {
+  try { console.log(JSON.stringify(discardPendingRailsAppUpdate({ reportPath: reportOption(), reason: option("--reason") }), null, 2)); }
+  catch (error) { console.error(`Rails app:update discard blocked: ${error.message}`); process.exitCode = 1; }
+} else if (command === "discard-last-rails-iteration") {
+  try { console.log(JSON.stringify(discardLastRailsIteration({ reportPath: reportOption(), reason: option("--reason") }), null, 2)); }
+  catch (error) { console.error(`Rails iteration discard blocked: ${error.message}`); process.exitCode = 1; }
+} else if (command === "record-dependency-review") {
+  try { console.log(JSON.stringify(recordDependencyReview({ reportPath: reportOption(), compatibility: option("--compatibility"), licenses: option("--licenses") }), null, 2)); }
+  catch (error) { console.error(`Dependency review blocked: ${error.message}`); process.exitCode = 1; }
 } else if (command === "inventory") {
   console.log(JSON.stringify(inventoryProject(), null, 2));
 } else if (command === "git-capabilities") {

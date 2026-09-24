@@ -29,7 +29,7 @@ function worktree(t) {
 function writeCompleteReport(root, startingSha, branch, from = "3.2.x", to = "3.3.x", expectedHead = startingSha, files = ["README.md"]) {
   const reportPath = ".ruby-upgrades/runs/run.json";
   let lock; try { lock = assertRunLock(root, reportPath); } catch { lock = acquireRunLock(root, reportPath); }
-  writeRun(root, reportPath, { schemaVersion: 2, validationReceiptsRequired: true, runId: "11111111-1111-4111-8111-111111111111", lockNonce: lock.nonce, title: "Test migration", status: "in_progress", phase: "hop_validated", startedAt: "2026-09-09T00:00:00Z", targetRuby: "3.4", targetPinnedAt: "2026-09-09T00:00:00Z", branch, startingSha, expectedHead, control: { stopAfterHop: false }, gitCapabilities: { supported: true }, research: { ladder: ["3.2", "3.3", "3.4"], citations: [{ title: "Ruby", url: "https://www.ruby-lang.org/" }] }, riskDecisions: [], iterations: [{ from, to, status: "complete", files, fixes: [{ files, explanation: "Compatibility update." }], citations: [{ title: "Ruby", url: "https://www.ruby-lang.org/" }], tests: { passed: true, command: "bundle exec rspec", smoke: "Boot passed." }, validationReceipts: [testReceipt(root)] }] });
+  writeRun(root, reportPath, { schemaVersion: 2, validationReceiptsRequired: true, runId: "11111111-1111-4111-8111-111111111111", lockNonce: lock.nonce, title: "Test migration", status: "in_progress", phase: "hop_validated", startedAt: "2026-09-09T00:00:00Z", targetRuby: "3.4", targetPinnedAt: "2026-09-09T00:00:00Z", branch, startingSha, expectedHead, control: { stopAfterHop: false }, gitCapabilities: { supported: true }, research: { ladder: ["3.2", "3.3", "3.4"], citations: [{ title: "Ruby", url: "https://www.ruby-lang.org/" }] }, riskDecisions: [], iterations: [{ from, to, status: "complete", files, dependencyReview: { completed: true, compatibility: "Reviewed.", licenses: "Reviewed." }, fixes: [{ files, explanation: "Compatibility update." }], citations: [{ title: "Ruby", url: "https://www.ruby-lang.org/" }], tests: { passed: true, command: "bundle exec rspec", smoke: "Boot passed." }, validationReceipts: [testReceipt(root)] }] });
   return reportPath;
 }
 
@@ -53,6 +53,29 @@ test("commits a validated hop locally and permits the next recorded hop", (t) =>
   const second = commitValidatedHop({ cwd: linked, reportPath });
   assert.notEqual(second.sha, first.sha);
   assert.equal(git(linked, ["status", "--porcelain"]), "");
+});
+
+test("commits active evidence while leaving runtime and stale reports local", (t) => {
+  const { linked, startingSha } = worktree(t);
+  fs.appendFileSync(path.join(linked, "README.md"), "Ruby 3.3\n");
+  const reportPath = writeCompleteReport(linked, startingSha, "ruby-upgrade/ruby-3.3");
+  fs.writeFileSync(path.join(linked, ".ruby-upgrades", "runtime.json"), "{}\n");
+  fs.writeFileSync(path.join(linked, ".ruby-upgrades", "runs", "stale.json"), "{}\n");
+  fs.writeFileSync(path.join(linked, ".ruby-upgrades", "runs", "stale.md"), "stale\n");
+  commitValidatedHop({ cwd: linked, reportPath });
+  const committed = git(linked, ["show", "--format=", "--name-only", "HEAD"]).split("\n");
+  assert.ok(committed.includes("README.md"));
+  assert.ok(committed.includes(reportPath));
+  assert.equal(committed.includes(".ruby-upgrades/runtime.json"), false);
+  assert.match(git(linked, ["status", "--porcelain"]), /runtime\.json/);
+  assert.match(git(linked, ["status", "--porcelain"]), /stale\.json/);
+});
+
+test("accepts the official RubyGems lockfile source", (t) => {
+  const { linked, startingSha } = worktree(t);
+  fs.writeFileSync(path.join(linked, "Gemfile.lock"), "GEM\n  remote: https://rubygems.org/\n");
+  const reportPath = writeCompleteReport(linked, startingSha, "ruby-upgrade/ruby-3.3", "3.2.x", "3.3.x", startingSha, ["Gemfile.lock"]);
+  assert.doesNotThrow(() => commitValidatedHop({ cwd: linked, reportPath }));
 });
 
 test("blocks credential-like changes and restores an empty staging area", (t) => {

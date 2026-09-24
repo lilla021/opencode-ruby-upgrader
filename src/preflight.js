@@ -24,7 +24,7 @@ export function inspectWorktree(cwd = process.cwd()) {
     const linkedWorktree = path.resolve(root, gitDir) !== path.resolve(root, commonDir);
     const branch = git(cwd, ["branch", "--show-current"]);
     const sha = git(cwd, ["rev-parse", "HEAD"]);
-    const dirty = Boolean(git(cwd, ["status", "--porcelain"]));
+    const dirty = Boolean(git(cwd, ["status", "--porcelain", "--", ".", ":(exclude).ruby-upgrades"]));
     const defaultBranch = configuredDefaultBranch(cwd);
     if (!linkedWorktree) return { ok: false, reason: "primary-checkout", root, branch, sha, defaultBranch };
     if (!branch) return { ok: false, reason: "detached-head", root, sha, defaultBranch };

@@ -63,7 +63,18 @@ function assertExpectedHead(state, report) {
 }
 
 function stagedSecretPaths(cwd, env) {
-  const names = text(cwd, ["diff", "--cached", "--name-only", "-z"], env).split("\0").filter(Boolean);
+  const tokens = text(cwd, ["diff", "--cached", "--name-status", "-z"], env).split("\0").filter(Boolean);
+  const names = [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const status = tokens[i];
+    if (/^[MACD]/.test(status)) {
+      if (status.charAt(0) !== "D") names.push(tokens[i + 1]);
+      i += 1;
+    } else if (/^[RC]\d{3}$/.test(status)) {
+      names.push(tokens[i + 2]);
+      i += 2;
+    }
+  }
   const indicators = [
     /-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----/i,
     /\bAKIA[0-9A-Z]{16}\b/,
@@ -101,6 +112,13 @@ function assertScopedChanges(cwd, iteration, reportPath, env) {
   return changed;
 }
 
+function unstageUnrelatedEvidence(cwd, iteration, reportPath, env) {
+  const declared = new Set([...(iteration.files ?? []), reportPath, reportPath.replace(/\.json$/, ".md")]);
+  const staged = text(cwd, ["diff", "--cached", "--name-only", "-z"], env).split("\0").filter(Boolean);
+  const localEvidence = staged.filter((file) => file.startsWith(".ruby-upgrades/") && !declared.has(file));
+  if (localEvidence.length) run(cwd, ["reset", "-q", "HEAD", "--", ...localEvidence], env);
+}
+
 function dependencyGate(cwd, changed, iteration, { allowBroadLockfile, allowPrivateSources }, env) {
   const lockfiles = changed.filter((file) => /(?:^|\/)(?:Gemfile\.lock|gems\.lock)$/i.test(file));
   if (lockfiles.length && iteration.dependencyReview?.completed !== true) throw new CommitGateError("A changed lockfile requires dependencyReview.completed: true with compatibility and license findings recorded.", "dependency-review-missing");
@@ -108,7 +126,8 @@ function dependencyGate(cwd, changed, iteration, { allowBroadLockfile, allowPriv
     const lines = text(cwd, ["diff", "--cached", "--numstat", "--", lockfile], env).split("\t");
     if ((Number(lines[0]) + Number(lines[1])) > 500 && !allowBroadLockfile) throw new CommitGateError(`Lockfile churn in ${lockfile} exceeds 500 changed lines. Review it and explicitly continue with --allow-broad-lockfile.`, "broad-lockfile-churn");
     const content = execFileSync("git", ["show", `:${lockfile}`], { cwd, env: { ...process.env, ...env }, encoding: "utf8" });
-    if (/^\s*remote:\s*(?!https:\/\/rubygems\.org)/m.test(content) && !allowPrivateSources) throw new CommitGateError(`A non-RubyGems source appears in ${lockfile}. Review its trust and explicitly continue with --allow-private-sources.`, "private-dependency-source");
+    const remotes = [...content.matchAll(/^\s*remote:\s*(\S+)\s*$/gm)].map((match) => match[1]);
+    if (remotes.some((remote) => !/^https:\/\/rubygems\.org\/?$/i.test(remote)) && !allowPrivateSources) throw new CommitGateError(`A non-RubyGems source appears in ${lockfile}. Review its trust and explicitly continue with --allow-private-sources.`, "private-dependency-source");
   }
   const gemfiles = changed.filter((file) => /(?:^|\/)Gemfile$/i.test(file));
   for (const gemfile of gemfiles) {
@@ -186,7 +205,8 @@ function commitValidated({ cwd = process.cwd(), reportPath, allowHooks = false, 
   try {
     run(cwd, ["read-tree", "HEAD"], env);
     run(cwd, ["add", "--all"], env);
-  const relativeReport = path.relative(state.root, fullPath);
+    const relativeReport = path.relative(state.root, fullPath);
+    unstageUnrelatedEvidence(cwd, iteration, relativeReport, env);
     const changed = assertScopedChanges(cwd, iteration, relativeReport, env);
     dependencyGate(cwd, changed, iteration, { allowBroadLockfile, allowPrivateSources }, env);
     const hooks = executableHooks(cwd);
