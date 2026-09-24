@@ -2,18 +2,39 @@
 
 An evidence-driven Ruby and Rails migration agent for [OpenCode](https://opencode.ai). It upgrades a project one Ruby minor series at a time toward a researched latest-stable or explicitly pinned Ruby target, researches compatibility guidance, updates affected code and dependencies, and leaves a reviewable migration trail.
 
-## Safety model
+## Quick start
 
-For Git repositories, the agent runs **only** from a linked Git worktree created by the user. Before starting, explicitly configure the repository default branch with `git config opencode-ruby-upgrader.defaultBranch main` (replace `main` as needed). The upgrader fails closed if this configuration is absent and never guesses `main`, `master`, or a remote default. This keeps your normal checkout free for other work. In a non-Git project, it asks for confirmation before proceeding without worktree isolation or Git checkpoints. It never creates, switches, deletes, merges, pushes, or reconfigures branches/remotes. It also never publishes, deploys, or runs destructive database commands.
-
-Before the first change it shows copyable instructions when invoked from a primary checkout:
+From a checkout of the project you want to upgrade (shown with `main` as the default branch):
 
 ```bash
-git branch ruby-upgrade/ruby-<target>
-git worktree add ../<repo>-ruby-<target> ruby-upgrade/ruby-<target>
-cd ../<repo>-ruby-<target>
+# 1. Declare your default branch (the agent fails closed without this — it never guesses)
+git config opencode-ruby-upgrader.defaultBranch main
+
+# 2. Create the linked worktree the agent is allowed to work in
+git branch ruby-upgrade/ruby-3.4
+git worktree add ../<repo>-ruby-3.4 ruby-upgrade/ruby-3.4
+
+# 3. Launch OpenCode from that worktree and start the migration
+cd ../<repo>-ruby-3.4
 opencode
 ```
+
+Then run `/ruby-upgrade` (or add `--dry-run` to get a no-write assessment first). The agent inventories the project, researches an official-source compatibility ladder, and proposes each validated hop as a local checkpoint commit for your review. See [Safety model](#safety-model) for what it will and will not do automatically.
+
+> Requires Git 2.5+ (linked-worktree safety model) and, for legacy Ruby hops, Docker for the isolated validation container (see [Security boundaries](#security-boundaries)).
+
+| Step | Who does it | Result |
+|---|---|---|
+| Set up worktree + config | You | Linked worktree, agent-ready |
+| `/ruby-upgrade` | Agent | Inventories, researches, plans ladder |
+| Validate a hop | Agent + Docker | Isolated `bundle exec rspec`, receipt recorded |
+| Commit a hop | Agent proposes, **you approve** | Local checkpoint commit with receipt digest |
+| Repeat | Loop | One minor series per hop |
+| Review & push | **You** | `git log`/dashboard then push the validated branch |
+
+## Safety model
+
+For Git repositories, the agent runs **only** from a linked Git worktree created by the user. Before starting, explicitly configure the repository default branch with `git config opencode-ruby-upgrader.defaultBranch main` (replace `main` as needed) — see [Quick start](#quick-start) for the three setup commands, which the agent also shows verbatim if you invoke it from a primary checkout. The upgrader fails closed if this configuration is absent and never guesses `main`, `master`, or a remote default. This keeps your normal checkout free for other work. In a non-Git project, it asks for confirmation before proceeding without worktree isolation or Git checkpoints. It never creates, switches, deletes, merges, pushes, or reconfigures branches/remotes. It also never publishes, deploys, or runs destructive database commands.
 
 After every routine Ruby minor-version hop with passing validation, the agent proposes a **local** checkpoint commit through a guarded commit gate and OpenCode asks for confirmation. The gate verifies the linked worktree and non-default branch, exact expected Git history, an empty initial staging area, a complete passing report iteration, and scans staged content for likely credentials. It cannot push, fetch, alter remotes, switch branches, merge, rebase, reset, or amend history. You can review and push any validated checkpoint; a run becomes `complete` only once it reaches its pinned target.
 
