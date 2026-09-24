@@ -2,7 +2,7 @@
 
 Complete every item before pushing a `v*` tag.
 
-- [ ] Create `github.com/lilla021/opencode-ruby-upgrader`; push the reviewed `main` branch.
+- [x] Create `github.com/lilla021/opencode-ruby-upgrader`; push the reviewed `main` branch.
 - [ ] Configure the GitHub `npm-release` environment with required approval and tag restriction `v*`.
 - [ ] Add a granular npm publish token as the `NPM_TOKEN` secret in that environment, or configure npm Trusted Publishing for this repository and workflow.
 - [x] Confirm `opencode-ruby-upgrader` currently returns npm registry 404 and is available for first publication.

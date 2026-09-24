@@ -32,6 +32,15 @@ Then run `/ruby-upgrade` (or add `--dry-run` to get a no-write assessment first)
 | Repeat | Loop | One minor series per hop |
 | Review & push | **You** | `git log`/dashboard then push the validated branch |
 
+## Proof of work
+
+The agent has completed a real end-to-end migration against a public fixture: [`ruby2-rails4-bootstrap-heroku`](https://github.com/lilla021/ruby2-rails4-bootstrap-heroku) (BSD-2-Clause) moved from **Ruby 2.4.10 / Rails 4.2.11.3** to **Ruby 3.4.10 / Rails 7.1.6** across 15 receipt-backed hops. Every hop was validated by `bundle exec rspec` in an isolated Docker container, then committed as a local checkpoint before the next hop began.
+
+- [Upgrade pull request](https://github.com/lilla021/ruby2-rails4-bootstrap-heroku/pull/1) — the full migration: 19 commits, one per reviewed step, with lint and spec checks currently passing on GitHub Actions.
+- [Evidence ledger](E2E_EVIDENCE.md) — every hop's validation receipt, commit SHA, and the fixes the migration required.
+
+This proves the workflow works on a genuinely old, real-world Rails stack. It does not claim every upgrade is safe — see [Product limits](#product-limits).
+
 ## Safety model
 
 For Git repositories, the agent runs **only** from a linked Git worktree created by the user. Before starting, explicitly configure the repository default branch with `git config opencode-ruby-upgrader.defaultBranch main` (replace `main` as needed) — see [Quick start](#quick-start) for the three setup commands, which the agent also shows verbatim if you invoke it from a primary checkout. The upgrader fails closed if this configuration is absent and never guesses `main`, `master`, or a remote default. This keeps your normal checkout free for other work. In a non-Git project, it asks for confirmation before proceeding without worktree isolation or Git checkpoints. It never creates, switches, deletes, merges, pushes, or reconfigures branches/remotes. It also never publishes, deploys, or runs destructive database commands.

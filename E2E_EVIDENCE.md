@@ -2,6 +2,15 @@
 
 This file records reproducible validation of the packaged plugin against a disposable, publicly licensed Rails fixture. It is not a claim that arbitrary Ruby or Rails upgrades are safe.
 
+## At a glance
+
+- **Outcome:** the fixture now runs at the pinned target **Ruby 3.4.10 / Rails 7.1.6** (from Ruby 2.4.10 / Rails 4.2.11.3).
+- **How:** 15 receipt-backed hops (8 Ruby, 7 Rails-bridge), each validated with `bundle exec rspec` in an isolated Docker container before its local checkpoint commit.
+- **Where:** branch `ruby-upgrade/e2e-3.4` of the fixture repo, as [pull request #1](https://github.com/lilla021/ruby2-rails4-bootstrap-heroku/pull/1) — GitHub Actions lint and Ruby-spec checks currently pass.
+- **Baseline:** fixture commit `bad95e2be88687f5d185c29a2361526fa05b8f54` (BSD-2-Clause).
+
+The sections below record each stage of that work, including the deliberate stops, defects found in the agent itself, and the fixes. What this does and does not prove is summarised in [Evidence limits](#evidence-limits).
+
 ## Fixture contract
 
 - **Repository:** `https://github.com/lilla021/ruby2-rails4-bootstrap-heroku` (fork of `diowa/ruby2-rails4-bootstrap-heroku`)
