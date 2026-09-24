@@ -22,6 +22,8 @@ jobs:
       - run: test "v$(node -p \"require('./package.json').version\")" = "$GITHUB_REF_NAME"
       - run: npm exec --yes --package=opencode-ai@1.18.30 -- sh -c 'OPENCODE_RUNTIME_E2E=1 npm run test:opencode'
       - run: npm pack --dry-run
+      # Publishes via npm trusted publishing (OIDC) once the trusted
+      # publisher for opencode-ruby-upgrader is configured on npmjs.com.
+      # No NODE_AUTH_TOKEN/NPM_TOKEN secret: the npm CLI exchanges the
+      # GitHub Actions OIDC token for a short-lived publish credential.
       - run: npm publish --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
