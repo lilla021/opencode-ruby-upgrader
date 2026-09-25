@@ -1,5 +1,15 @@
 # opencode-ruby-upgrader — release notes
 
+## v0.1.4 — showcase polish
+
+No functional change. Attribution and presentation updates:
+
+- The npm package page now bears the maintainer's full name with a profile link instead of a bare handle.
+- The README acknowledges [opencode-craft](https://github.com/pauloralves/opencode-craft), the skill pack this agent was built with.
+- A dashboard screenshot example (captured headlessly from a real completed fixture run) is added under the Evidence section.
+
+Published through the same protected-CI gate.
+
 ## v0.1.3 — documentation refresh
 
 No functional change. The public documentation is tightened so the package reads cleanly on the registry and in the repository:
