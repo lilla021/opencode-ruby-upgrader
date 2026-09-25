@@ -13,16 +13,18 @@ jobs:
     runs-on: ubuntu-latest
     environment: npm-release
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # Pinned to immutable commit SHAs (actions runtime hardening): keep the
+      # exact versions that produced the validated 0.1.2 publish.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # actions/checkout@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # actions/setup-node@v4
         with:
           node-version: 22
       # Trusted publishing (OIDC) needs npm >= 11.5.1 to exchange the
-      # GitHub Actions OIDC token for a short-lived npm credential. Upgrading
-      # decouples publish behavior from whatever npm the runner Node bundles
+      # GitHub Actions OIDC token for a short-lived npm credential. Pinned for
+      # reproducible publish behavior instead of whatever npm@latest resolves
       # (Ubuntu 22 nodes ship npm 10.x, which can sign provenance but cannot
       # authenticate to the registry -> misleading 404 "not in this registry").
-      - run: npm install -g npm@latest
+      - run: npm install -g npm@11.16.0
       # IMPORTANT: do NOT set `registry-url` on setup-node. That writes a
       # dummy `_authToken` line into .npmrc and exports NODE_AUTH_TOKEN,
       # which npm prefers over the OIDC exchange and breaks trusted
@@ -40,8 +42,8 @@ jobs:
       - run: npm install --no-save --no-package-lock opencode-ai@1.18.30
       - run: OPENCODE_RUNTIME_E2E=1 npm run test:opencode
       - run: npm pack --dry-run
-      # Publishes via npm trusted publishing (OIDC) once the trusted
-      # publisher for opencode-ruby-upgrader is configured on npmjs.com.
-      # No NODE_AUTH_TOKEN/NPM_TOKEN secret: the npm CLI exchanges the
+      # Publishes via npm trusted publishing (OIDC): the "npm-publish" trusted
+      # publisher for opencode-ruby-upgrader is configured on npmjs.com. No
+      # NODE_AUTH_TOKEN/NPM_TOKEN secret is used; the npm CLI exchanges the
       # GitHub Actions OIDC token for a short-lived publish credential.
       - run: npm publish --provenance
