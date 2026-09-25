@@ -57,13 +57,24 @@ export function inspectGitCapabilities(cwd = process.cwd()) {
     const root = git(cwd, ["rev-parse", "--show-toplevel"]);
     const value = (args, fallback = false) => { try { return git(cwd, args); } catch { return fallback; } };
     const submodules = fs.existsSync(path.join(root, ".gitmodules"));
+    const lfsAttributes = (() => {
+      // Repo-local LFS signal: .gitattributes declaring filter=lfs works even
+      // when the LFS smudge/clean filters live in the user's global config.
+      try { return fs.readFileSync(path.join(root, ".gitattributes"), "utf8").split("\n").some((line) => !line.trim().startsWith("#") && /\bfilter\s*=\s*lfs\b/i.test(line)); }
+      catch { return false; }
+    })();
+    const shallow = value(["rev-parse", "--is-shallow-repository"]) === "true";
+    // Capability detection reads repository-local state only, so ambient
+    // global/system git config cannot leak machine-specific risks into a run.
+    const sparseCheckout = value(["config", "--local", "--bool", "core.sparseCheckout"]) === "true";
+    const lfsConfigured = value(["config", "--local", "--get-regexp", "^filter\\.lfs\\."]) !== false || lfsAttributes;
     return {
       supported: true,
-      shallow: value(["rev-parse", "--is-shallow-repository"]) === "true",
-      sparseCheckout: value(["config", "--bool", "core.sparseCheckout"]) === "true",
+      shallow,
+      sparseCheckout,
       submodules,
-      lfsConfigured: value(["config", "--get-regexp", "^filter\\.lfs\\."]) !== false,
-      recommendation: submodules || value(["rev-parse", "--is-shallow-repository"]) === "true" || value(["config", "--bool", "core.sparseCheckout"]) === "true" ? "Pause for repository-topology review before migration." : "Standard Git topology."
+      lfsConfigured,
+      recommendation: submodules || shallow || sparseCheckout ? "Pause for repository-topology review before migration." : "Standard Git topology."
     };
   } catch { return { supported: false, recommendation: "Not a Git repository." }; }
 }

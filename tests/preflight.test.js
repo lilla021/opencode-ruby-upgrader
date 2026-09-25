@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { inspectWorktree } from "../src/preflight.js";
+import { inspectGitCapabilities, inspectWorktree } from "../src/preflight.js";
 import { createLinkedWorktree } from "./helpers/git-worktree.js";
 
 test("identifies a non-Git project for dry-run inventory", (t) => {
@@ -26,4 +26,22 @@ test("blocks a primary checkout and accepts a linked worktree", (t) => {
 test("fails closed when no explicit default branch is configured", (t) => {
   const { linked } = createLinkedWorktree(t, { prefix: "ruby-upgrade-default-", configureDefaultBranch: false });
   assert.equal(inspectWorktree(linked).reason, "default-branch-unconfigured");
+});
+
+test("capability detection ignores ambient global git config", (t) => {
+  const { linked } = createLinkedWorktree(t, { prefix: "ruby-capabilities-" });
+  const globalDir = fs.mkdtempSync(path.join(os.tmpdir(), "ruby-gitconfig-"));
+  t.after(() => fs.rmSync(globalDir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(globalDir, "gitconfig"), '[filter "lfs"]\n\tsmudge = git-lfs smudge -- %f\n\tclean = git-lfs clean -- %f\n');
+  const previous = process.env.GIT_CONFIG_GLOBAL;
+  process.env.GIT_CONFIG_GLOBAL = path.join(globalDir, "gitconfig");
+  t.after(() => { if (previous === undefined) delete process.env.GIT_CONFIG_GLOBAL; else process.env.GIT_CONFIG_GLOBAL = previous; });
+  assert.equal(inspectGitCapabilities(linked).lfsConfigured, false);
+  assert.equal(inspectGitCapabilities(linked).supported, true);
+});
+
+test("detects repository-local LFS from .gitattributes", (t) => {
+  const { linked } = createLinkedWorktree(t, { prefix: "ruby-lfs-", files: { "README.md": "test\n", ".gitattributes": "* filter=lfs diff=lfs merge=lfs -text\n" } });
+  assert.equal(inspectGitCapabilities(linked).lfsConfigured, true);
+  assert.equal(inspectGitCapabilities(linked).recommendation, "Standard Git topology.");
 });
