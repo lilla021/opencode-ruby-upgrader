@@ -1,6 +1,6 @@
 {
   "name": "opencode-ruby-upgrader",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A safe, evidence-driven Ruby runtime upgrade agent and local migration dashboard for OpenCode",
   "author": "Priscilla Cournoyer",
   "repository": {

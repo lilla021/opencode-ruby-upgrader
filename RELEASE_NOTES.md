@@ -1,4 +1,10 @@
-# opencode-ruby-upgrader — v0.1.0 release notes
+# opencode-ruby-upgrader — release notes
+
+## v0.1.1 — first automated release
+
+Published from CI via npm trusted publishing (OIDC) with provenance. No behavior change from v0.1.0; this release verifies the automated pipeline end to end: tag push → environment approval → `npm test` → OIDC publish with provenance attestation.
+
+## v0.1.0 — initial public release
 
 ## What this is
 
