@@ -85,7 +85,7 @@ The dashboard identifies local checkpoint commits from trailers embedded in thos
 
 ## Controls and recovery
 
-Use `/ruby-upgrade --dry-run` for a no-write inventory and proposed migration assessment; it creates no report, lock, checkpoint, or durable research evidence. Use `/ruby-upgrade --target 3.4` to pin an explicit final Ruby version, or `/ruby-upgrade --stop-after-hop` to validate and commit one hop before stopping.
+Use `/ruby-upgrade --dry-run` for a no-write inventory and proposed migration assessment; it creates no report, lock, checkpoint, or durable research evidence. Use `/ruby-upgrade --target <version>` (for example `/ruby-upgrade --target 3.4`) to pin an explicit final Ruby version, or `/ruby-upgrade --stop-after-hop` to validate and commit one hop before stopping.
 
 Each active run holds a local lock. To stop for review or manual work, transition it to `paused`; that releases the lock without marking the migration complete. Resume the existing report rather than starting a second migration:
 
