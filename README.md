@@ -74,6 +74,10 @@ Git 2.5 or newer is required for the linked-worktree safety model.
 
 Every run has a generated JSON record and Markdown companion under `.ruby-upgrades/runs/`. Reports contain citations, version hops, dependency and code fixes, test/coverage metrics, smoke-test evidence, risks, and approved local commits. The directory is intentionally versionable and can be opened directly as an Obsidian vault.
 
+Here is the dashboard rendering a completed end-to-end fixture migration — Ruby 2.4.10 → 3.4.10, 15 receipt-backed hops, with citation links and per-hop summaries:
+
+![Evidence dashboard showing a completed fixture migration](docs/dashboard.png)
+
 Launch the local-only dashboard from the repository worktree:
 
 ```bash

@@ -2,7 +2,7 @@
   "name": "opencode-ruby-upgrader",
   "version": "0.1.3",
   "description": "A safe, evidence-driven Ruby runtime upgrade agent and local migration dashboard for OpenCode",
-  "author": "lilla021",
+  "author": "Priscilla Cournoyer (https://github.com/lilla021)",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/lilla021/opencode-ruby-upgrader.git"
