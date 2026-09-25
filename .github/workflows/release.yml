@@ -17,7 +17,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: https://registry.npmjs.org
+      # Trusted publishing (OIDC) needs npm >= 11.5.1 to exchange the
+      # GitHub Actions OIDC token for a short-lived npm credential. Upgrading
+      # decouples publish behavior from whatever npm the runner Node bundles
+      # (Ubuntu 22 nodes ship npm 10.x, which can sign provenance but cannot
+      # authenticate to the registry -> misleading 404 "not in this registry").
+      - run: npm install -g npm@latest
+      # IMPORTANT: do NOT set `registry-url` on setup-node. That writes a
+      # dummy `_authToken` line into .npmrc and exports NODE_AUTH_TOKEN,
+      # which npm prefers over the OIDC exchange and breaks trusted
+      # publishing with a fake-token 404. OIDC needs a clean auth path.
+      # (https://github.com/npm/cli/issues/1440, npm/cli#9088)
       - run: npm test
       - run: |
           PKG_VER="$(node -p 'require("./package.json").version')"
