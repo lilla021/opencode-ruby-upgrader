@@ -114,6 +114,10 @@ The credential scanner is heuristic: it recognizes common token formats and quot
 
 Run the self-contained test suite with `npm test`. A CI environment that installs a supported OpenCode CLI can also run `OPENCODE_RUNTIME_E2E=1 npm run test:opencode`; this verifies the installed runtime is available and the plugin registers its agent/command contract before release.
 
+## Acknowledgments
+
+This agent was built with [opencode-craft](https://github.com/pauloralves/opencode-craft) (MIT, by [Paulo Alves](https://github.com/pauloralves)) — a senior pair-programming, craftsmanship, and knowledge-ledger skill pack for OpenCode. Its review cadence, evidence discipline, and interview-oriented trade-off notes shaped how this project is designed and presented. Thanks also to the community that produces the [official Ruby release](https://www.ruby-lang.org/en/downloads/releases/) and [Rails](https://guides.rubyonrails.org/) documentation this agent cites.
+
 ## Disclaimer
 
 **Use at your own risk.** This tool can modify source code, dependency locks, runtime configuration, and local Git history. It provides automated migration assistance only. You are solely responsible for reviewing changes, maintaining backups, validating tests, and approving any deployment or remote push. The authors provide no warranty and accept no liability for data loss, downtime, broken builds, or other damage arising from its use.
