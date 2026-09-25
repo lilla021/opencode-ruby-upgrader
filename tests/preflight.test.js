@@ -41,7 +41,10 @@ test("capability detection ignores ambient global git config", (t) => {
 });
 
 test("detects repository-local LFS from .gitattributes", (t) => {
-  const { linked } = createLinkedWorktree(t, { prefix: "ruby-lfs-", files: { "README.md": "test\n", ".gitattributes": "* filter=lfs diff=lfs merge=lfs -text\n" } });
+  // A realistic attribute scope (specific patterns, not `*`) keeps the
+  // .gitattributes file itself out of the LFS clean filter, so its committed
+  // blob remains plain text even on hosts with git-lfs installed.
+  const { linked } = createLinkedWorktree(t, { prefix: "ruby-lfs-", files: { "README.md": "test\n", ".gitattributes": "*.bin filter=lfs diff=lfs merge=lfs -text\n" } });
   assert.equal(inspectGitCapabilities(linked).lfsConfigured, true);
   assert.equal(inspectGitCapabilities(linked).recommendation, "Standard Git topology.");
 });
