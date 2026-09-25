@@ -1,10 +1,13 @@
 # opencode-ruby-upgrader — release notes
 
-## v0.1.2 — first automated release
+## v0.1.2 — first fully automated release
 
-This release uses npm trusted publishing (OIDC) with provenance from protected CI. It has no plugin behavior change from v0.1.0; it verifies the automated pipeline end to end: tag push → environment approval → `npm test` → pinned OpenCode runtime smoke test → OIDC publish with provenance attestation.
+The first release published entirely through protected CI with npm trusted publishing (OIDC) and signed provenance. It also ships the fixes that made that pipeline reliable:
 
-`v0.1.1` was tagged but not published after its release gate correctly stopped on the OpenCode runtime smoke test. The gate now explicitly approves only the reviewed `opencode-ai@1.18.30` install script required to materialize the OpenCode binary under npm 11.
+- **npm 11 install-script gate:** the release-time runtime test now installs the pinned `opencode-ai@1.18.30` package as a real dependency, since npm 11 blocks dependency install scripts by default. `v0.1.1` was tagged but never published because its gate correctly stopped on exactly this.
+- **Hermetic safety gates:** Git capability detection reads repository-local state only, so machine-specific Git config on a runner or host cannot add phantom approval requirements to a migration.
+- **Cleaner run control:** durable migrations require a user-created linked Git worktree; outside a Git repo only the no-write dry-run inventory is offered. Risk decisions now honor the latest recorded verdict, so a paused or blocked risk that is later approved resumes without a fresh run.
+- **Docs and metadata hygiene:** public docs use placeholder syntax for user-supplied values, wording is tightened, and package metadata is scrubbed of personal details.
 
 ## v0.1.0 — initial public release
 
@@ -15,7 +18,7 @@ An evidence-driven Ruby and Rails upgrade agent for [OpenCode](https://opencode.
 ## What's new in this release
 
 - **Guided migration loop:** inventory the project, research an official-source compatibility ladder, validate each hop in an isolated Docker container running the project's real test command, and propose a local checkpoint commit with the validation receipt digest embedded in the commit message.
-- **Rails bridge support:** for Rails apps, each hop runs `bin/rails app:update` with conflict-skipping behaviour, presents every generated file for review before it is accepted, and records dependency-compatibility and license findings for every lockfile change.
+- **Rails bridge support:** for Rails apps, each hop runs `bin/rails app:update` with conflict-skipping behavior, presents every generated file for review before it is accepted, and records dependency-compatibility and license findings for every lockfile change.
 - **Evidence trail:** JSON and Markdown reports under `.ruby-upgrades/runs/` (openable as an Obsidian vault), a local-only read-only dashboard on `127.0.0.1`, and receipt digests in every checkpoint commit trailer.
 - **Safety model:** the agent runs only in a user-created linked Git worktree, fails closed unless the default branch is configured explicitly, and pauses — with evidence and options — before anything sensitive: data changes, authentication/authorization, payments, secrets, production configuration, framework-major upgrades, private dependencies, native extensions, or failed validation. It never pushes, merges, reconfigures branches, or runs destructive commands.
 
@@ -27,7 +30,7 @@ The agent completed a full end-to-end migration against the public `lilla021/rub
 
 See [README.md](README.md#quick-start): from a linked Git worktree with `opencode-ruby-upgrader.defaultBranch` configured, launch OpenCode and run `/ruby-upgrade`. Use `--dry-run` for a no-write assessment first.
 
-Requirements: Git 2.5+; Docker for legacy Ruby hops (used for the isolated validation container).
+Requirements: Git 2.5+; Docker when your host cannot run the Ruby version being upgraded (used for the isolated validation container).
 
 ## Supported projects
 
@@ -35,7 +38,7 @@ Bundler projects using Rails, RSpec, or Minitest get the full automatic flow (in
 
 ## Known limitations
 
-- The credential scanner is heuristic; it recognises common token formats but may miss unusual forms.
+- The credential scanner is heuristic; it recognizes common token formats but may miss unusual forms.
 - Run reports are local mutable JSON evidence; their integrity is bounded by your local filesystem permissions, not a tamper-proof store.
 - The agent validates tests and compatibility, not production behavior, security correctness, or deployment safety — review and push are always your step.
 - Gemfile source detection is static and may not resolve dynamically computed sources; private sources require explicit review and approval.

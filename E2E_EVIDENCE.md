@@ -30,7 +30,7 @@ The sections below record each stage of that work, including the deliberate stop
 | Dependency install / test suite | Not run. A container or version manager providing the exact historical runtime is required. |
 | Container runtime | Blocked: Docker CLI was installed, but the local Docker daemon was unavailable; no containers or fixture code were started. |
 
-## 2026-09-18 container baseline — in progress
+## 2026-09-18 container baseline
 
 | Check | Result |
 | --- | --- |
@@ -42,7 +42,7 @@ The sections below record each stage of that work, including the deliberate stop
 
 Do not treat this as an application or plugin failure until the pinned runtime prerequisite has been supplied and the command has been rerun. Record the command result, timestamps, exit code, sanitized output digest, and worktree fingerprint after the rerun.
 
-## 2026-09-18 baseline RSpec — in progress
+## 2026-09-18 baseline RSpec
 
 | Check | Result |
 | --- | --- |
@@ -64,7 +64,7 @@ The local package worktree now contains a constrained `docker-bundle-rspec` exec
 
 An explicit local-plugin preflight returned `ok: false` with `reason: "dirty-worktree"` for branch `ruby-upgrade/e2e-3.4` at fixture commit `bad95e2be88687f5d185c29a2361526fa05b8f54`; its configured default branch was correctly detected as `main`. The only observed change was an unrelated ignored local note, not fixture work. After removing that file, preflight was rerun before any plugin lifecycle action. The package was also corrected so its injected agent invokes the package-local Node CLI rather than assuming the package binary is globally on `PATH`; `npm test` remained 32/32 and `git diff --check` passed after that correction.
 
-## Fixture reset attempt — in progress
+## Fixture reset attempt
 
 The disposable worktree was recreated at the pinned baseline and the PostgreSQL/Ruby containers were recreated. The first rerun of `bundle exec rake db:create` again stopped at `ExecJS::RuntimeUnavailable`. This is not yet evidence of a fixture change or database failure: the container must first prove that the installed Node.js package exposes an executable name discoverable by ExecJS (`node`). The next diagnostic records only runtime command availability/version; no Gemfile, lockfile, or application configuration change is authorized.
 

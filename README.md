@@ -11,17 +11,18 @@ From a checkout of the project you want to upgrade (shown with `main` as the def
 git config opencode-ruby-upgrader.defaultBranch main
 
 # 2. Create the linked worktree the agent is allowed to work in
-git branch ruby-upgrade/ruby-3.4
-git worktree add ../<repo>-ruby-3.4 ruby-upgrade/ruby-3.4
+#    (replace <target> with the Ruby version you're upgrading to, e.g. 3.4)
+git branch ruby-upgrade/ruby-<target>
+git worktree add ../<repo>-ruby-<target> ruby-upgrade/ruby-<target>
 
 # 3. Launch OpenCode from that worktree and start the migration
-cd ../<repo>-ruby-3.4
+cd ../<repo>-ruby-<target>
 opencode
 ```
 
 Then run `/ruby-upgrade` (or add `--dry-run` to get a no-write assessment first). The agent inventories the project, researches an official-source compatibility ladder, and proposes each validated hop as a local checkpoint commit for your review. See [Safety model](#safety-model) for what it will and will not do automatically.
 
-> Requires Git 2.5+ (linked-worktree safety model) and, for legacy Ruby hops, Docker for the isolated validation container (see [Security boundaries](#security-boundaries)).
+> Requires Git 2.5+ (linked-worktree safety model) and Docker for the isolated validation container when your host cannot run the Ruby version being tested (see [Security boundaries](#security-boundaries)).
 
 | Step | Who does it | Result |
 |---|---|---|
@@ -93,7 +94,7 @@ Each active run holds a local lock. To stop for review or manual work, transitio
 opencode-ruby-upgrader resume --report .ruby-upgrades/runs/<run>.json
 ```
 
-`complete`, `blocked`, and `paused` runs release their lock. A Ruby run blocked by an approved Rails bridge cannot be resumed: complete its linked Rails bridge, then start a fresh Ruby run. For other blockers, inspect the report and use the documented transition/resume path. To undo a completed hop, use the reviewable local history: `git revert <hop-sha>`. Do not use reset, rebase, or force-push as routine migration recovery.
+`complete`, `blocked`, and `paused` runs release their lock. For other blockers, inspect the report and use the documented transition/resume path. To undo a completed hop, use the reviewable local history: `git revert <hop-sha>`. Do not use reset, rebase, or force-push as routine migration recovery.
 
 If a resolved Rails version blocks the next Ruby hop, record the user-approved bridge, then transition the Ruby run to `blocked`. That Ruby report is terminal: complete the linked Rails lifecycle and start a fresh Ruby run. Every Rails iteration executes `bin/rails app:update` first, records its receipt, reviews that exact working-tree fingerprint, and only then runs final tests. Validate and checkpoint each one with `commit-rails-hop`.
 
@@ -101,7 +102,9 @@ If a resolved Rails version blocks the next Ruby hop, record the user-approved b
 
 The agent defaults unknown shell commands to an OpenCode confirmation prompt. Git inspection is allowed, while direct Git mutation, GitHub CLI, publishing, and shell chaining/pipes/substitutions are denied. Dependency installation/updates, recognized tests, state writes, `commit-hop`, and `commit-rails-hop` require confirmation. This protects against accidental agent actions, not malicious project code: dependency installation and tests execute project-controlled code with your local user permissions. Use an isolated environment for repositories you do not trust, and review any command OpenCode asks you to approve.
 
-New reports require `record-executed-iteration --validation <id>` or `record-executed-rails-iteration --validation <test-id>`; asserted results cannot be recorded or committed. The accepted IDs map to fixed no-shell commands: `bundle-rspec`, `bundle-rails-test`, `bundle-rake-test`, `bin-rails-test`, and, for Rails bridges, `rails-app-update`. For a legacy Ruby hop, the agent runs `prepare-target-runtime --ruby <x.y.z>` after selecting the exact target patch release. One confirmation provisions labelled per-run Ruby and isolated PostgreSQL Docker resources, installs Node, installs Bundler 2.4.22, runs `bundle install`, and, for Rails, creates the isolated test database. It writes nonsecret `.ruby-upgrades/runtime.json` with only safe preparation digests and the resolved image ID; raw output and `DATABASE_URL` are never persisted. `docker-bundle-rspec` reuses and verifies that manifest, including the exact requested Ruby execution and resolved image ID, before executing the fixed `docker exec --env DATABASE_CLEANER_ALLOW_REMOTE_DATABASE_URL=true <container> bundle exec rspec`. The safeguard override is scoped to the verified isolated test process; no container name, report path, or environment value is needed from the user. Receipts persist only an output digest and byte count, plus structured test metrics; raw validation output is deliberately not committed. Each receipt also binds to a non-evidence working-tree fingerprint, which the commit gate rechecks after final validation. A checkpoint commit carries the receipt digest. This is tamper-evident provenance for a committed report, not protection against the same local user rewriting both evidence and Git history.
+New reports require `record-executed-iteration --validation <id>` or `record-executed-rails-iteration --validation <test-id>`; asserted results cannot be recorded or committed. The accepted IDs map to fixed no-shell commands: `bundle-rspec`, `bundle-rails-test`, `bundle-rake-test`, `bin-rails-test`, and, for Rails bridges, `rails-app-update`. When the target Ruby is unavailable on your host, the agent runs `prepare-target-runtime --ruby <x.y.z>` after selecting the exact target patch release. One confirmation provisions labeled per-run Ruby and isolated PostgreSQL Docker resources, installs Node, installs Bundler 2.4.22, runs `bundle install`, and, for Rails, creates the isolated test database.
+
+It writes nonsecret `.ruby-upgrades/runtime.json` with only safe preparation digests and the resolved image ID; raw output and `DATABASE_URL` are never persisted. `docker-bundle-rspec` reuses and verifies that manifest, including the exact requested Ruby execution and resolved image ID, before executing the fixed `docker exec --env DATABASE_CLEANER_ALLOW_REMOTE_DATABASE_URL=true <container> bundle exec rspec`. The safeguard override is scoped to the verified isolated test process; no container name, report path, or environment value is needed from the user. Receipts persist only an output digest and byte count, plus structured test metrics; raw validation output is deliberately not committed. Each receipt also binds to a non-evidence working-tree fingerprint, which the commit gate rechecks after final validation. A checkpoint commit carries the receipt digest. This is tamper-evident provenance for a committed report, not protection against the same local user rewriting both evidence and Git history.
 
 ## Product limits
 

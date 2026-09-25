@@ -1,17 +1,18 @@
-# v0.1.0 Release Gate
+# Release Gate
 
-Complete every item before pushing a `v*` tag.
+Complete every item before pushing a `v*` tag. The protected `npm-release` environment enforces the required review; CI runs `npm test`, the pinned runtime smoke test, and `npm publish --provenance`.
 
-- [x] Create `github.com/lilla021/opencode-ruby-upgrader`; push the reviewed `main` branch.
-- [x] Configure the GitHub `npm-release` environment with required approval and tag restriction `v*`.
-- [x] Published `v0.1.0` manually from the workstation once with 2FA (npm policy required the package to exist before OIDC trusted publishing could be configured — see `npm/cli#8544`). No long-lived token was used for this bootstrap.
-- [x] After v0.1.0 exists: configure npm Trusted Publishing (OIDC) for `opencode-ruby-upgrader` bound to `.github/workflows/release.yml` + `npm-release` environment; CI then publishes with `npm publish --provenance` using no stored secret. Optionally restrict the trusted publisher to stage-only for later versions.
-- [x] Confirmed `opencode-ruby-upgrader` returned npm registry 404 and was available before its first publication.
-- [x] Run `npm test` and `npm pack --dry-run` from the release candidate.
-- [x] Install latest OpenCode, load this package from a local `file://` plugin path, restart OpenCode, and confirm `/ruby-upgrade` plus its permission prompts.
-- [x] Run a supported Ruby fixture in a linked Git worktree: complete one hop, inspect the local commit/report/dashboard, then exercise one risk pause.
-- [x] When releasing Rails bridge support, run a disposable Rails compatibility bridge: review `app:update` evidence, complete one Rails hop, and inspect Rails trailers and dashboard rendering.
-- [x] Review the package metadata, LICENSE, README, SECURITY.md, RELEASING.md, and packed-file list. Confirm no credentials or customer artifacts are present.
-- [x] Create release notes describing scope, supported adapters, known limitations, and rollback (`git revert <hop-sha>`) — see [RELEASE_NOTES.md](RELEASE_NOTES.md).
+## Before every release
 
-One-time exception: the very first publish (v0.1.0) is done manually from the workstation with 2FA, because npm requires the package to exist before OIDC trusted publishing or staging can be configured. All subsequent publishes go through the protected `npm-release` environment with OIDC trusted publishing; do not bypass it with token-based direct publishing.
+- [ ] Bump the version and update [RELEASE_NOTES.md](RELEASE_NOTES.md): scope, supported adapters, known limitations, rollback.
+- [ ] Review the package metadata (name, description, keywords, `repository`, `bugs`, `homepage`) and the packed-file list with `npm pack --dry-run`.
+- [ ] Run `npm test`; confirm the release workflow's runtime smoke gate passes with the pinned OpenCode runtime.
+- [ ] Confirm no credentials, personal data, or local paths appear in the packed files, README, SECURITY.md, PRIVACY.md, or release notes.
+- [ ] Tag the exact reviewed commit and push the tag from `main`; approve the `npm-release` deployment so CI publishes with OIDC provenance — never bypass with token-based local publishing.
+- [ ] Verify on the registry: version, `latest` dist-tag, and SLSA provenance attestation.
+
+## History
+
+- **v0.1.0** was the one-time bootstrap: npm requires a package to exist before OIDC trusted publishing can be configured, so it was published once from the workstation with 2FA and no long-lived token.
+- **v0.1.1** was tagged but never published; its gate correctly stopped on the OpenCode runtime smoke test (the npm 11 install-script gate, fixed in v0.1.2).
+- **v0.1.2** was the first release published through the fully automated gate above.
