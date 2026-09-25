@@ -1,5 +1,11 @@
 # opencode-ruby-upgrader — release notes
 
+## v0.1.5 — registry visuals
+
+No functional change. The npm package page now renders its README images: the dashboard and vault-view screenshots moved from relative paths to absolute GitHub URLs, so they display on the registry in addition to GitHub.
+
+Published through the same protected-CI gate.
+
 ## v0.1.4 — showcase polish
 
 No functional change. Attribution and presentation updates:
