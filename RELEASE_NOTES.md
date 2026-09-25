@@ -1,5 +1,16 @@
 # opencode-ruby-upgrader — release notes
 
+## v0.1.3 — documentation refresh
+
+No functional change. The public documentation is tightened so the package reads cleanly on the registry and in the repository:
+
+- Quick-start examples use `<target>` placeholders instead of a hardcoded Ruby version.
+- [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) is now a reusable Release Gate rather than the one-time v0.1.0 audit.
+- The v0.1.2 notes describe what that release actually changed.
+- Stale "in progress" section headings in the evidence ledger were resolved; the receipts themselves are unchanged.
+
+Published through the same protected-CI gate as v0.1.2.
+
 ## v0.1.2 — first fully automated release
 
 The first release published entirely through protected CI with npm trusted publishing (OIDC) and signed provenance. It also ships the fixes that made that pipeline reliable:
