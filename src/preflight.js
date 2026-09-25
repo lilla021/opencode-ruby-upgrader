@@ -58,9 +58,11 @@ export function inspectGitCapabilities(cwd = process.cwd()) {
     const value = (args, fallback = false) => { try { return git(cwd, args); } catch { return fallback; } };
     const submodules = fs.existsSync(path.join(root, ".gitmodules"));
     const lfsAttributes = (() => {
-      // Repo-local LFS signal: .gitattributes declaring filter=lfs works even
-      // when the LFS smudge/clean filters live in the user's global config.
-      try { return fs.readFileSync(path.join(root, ".gitattributes"), "utf8").split("\n").some((line) => !line.trim().startsWith("#") && /\bfilter\s*=\s*lfs\b/i.test(line)); }
+      // Repo-local LFS signal: the committed root .gitattributes declaring
+      // filter=lfs. Read from the object database (not the working file) so
+      // results hold even where git applies the declared smudge filter on
+      // checkout (e.g. hosts with git-lfs installed system-wide).
+      try { return git(cwd, ["show", "HEAD:.gitattributes"]).split("\n").some((line) => !line.trim().startsWith("#") && /\bfilter\s*=\s*lfs\b/i.test(line)); }
       catch { return false; }
     })();
     const shallow = value(["rev-parse", "--is-shallow-repository"]) === "true";
