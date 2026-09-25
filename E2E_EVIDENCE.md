@@ -28,7 +28,7 @@ The sections below record each stage of that work, including the deliberate stop
 | Plugin dry-run inventory | Passed: Rails/RSpec detected; Ruby `2.4.10`; Rails `4.2.11.3`; 118 locked dependencies; no detected private sources. |
 | Host runtime | Blocked as expected: host Ruby is `2.6.10`, but fixture requires `2.4.10`; installed Bundler is `1.17.2`, while the lockfile specifies `1.17.3`. |
 | Dependency install / test suite | Not run. A container or version manager providing the exact historical runtime is required. |
-| Container runtime | Blocked: Docker CLI is installed, but the local Docker daemon was unavailable at `unix:///Users/lilla/.docker/run/docker.sock`; no containers or fixture code were started. |
+| Container runtime | Blocked: Docker CLI was installed, but the local Docker daemon was unavailable; no containers or fixture code were started. |
 
 ## 2026-09-18 container baseline — in progress
 
@@ -62,7 +62,7 @@ The local package worktree now contains a constrained `docker-bundle-rspec` exec
 
 ## 2026-09-18 OpenCode preflight — blocked, recoverable
 
-An explicit local-plugin preflight returned `ok: false` with `reason: "dirty-worktree"` for branch `ruby-upgrade/e2e-3.4` at fixture commit `bad95e2be88687f5d185c29a2361526fa05b8f54`; its configured default branch was correctly detected as `main`. The only observed worktree change was an untracked `LEARNING_PATH.md` created by the OpenCode session, not fixture work. Remove that generated file and rerun preflight before any plugin lifecycle action. The package was also corrected so its injected agent invokes the package-local Node CLI rather than assuming the package binary is globally on `PATH`; `npm test` remained 32/32 and `git diff --check` passed after that correction.
+An explicit local-plugin preflight returned `ok: false` with `reason: "dirty-worktree"` for branch `ruby-upgrade/e2e-3.4` at fixture commit `bad95e2be88687f5d185c29a2361526fa05b8f54`; its configured default branch was correctly detected as `main`. The only observed change was an unrelated ignored local note, not fixture work. After removing that file, preflight was rerun before any plugin lifecycle action. The package was also corrected so its injected agent invokes the package-local Node CLI rather than assuming the package binary is globally on `PATH`; `npm test` remained 32/32 and `git diff --check` passed after that correction.
 
 ## Fixture reset attempt — in progress
 

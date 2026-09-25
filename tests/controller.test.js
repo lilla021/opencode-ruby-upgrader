@@ -3,14 +3,16 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { beginRailsBridgeRun, beginRun, discardLastRailsIteration, recordDependencyReview, recordExecutedIteration, recordFrameworkBridge, recordIteration, recordRailsIteration, recordRailsResearch, recordResearch, resumeRun, transitionRun } from "../src/controller.js";
+import { beginRailsBridgeRun, beginRun, discardLastRailsIteration, recordDependencyReview, recordExecutedIteration, recordFrameworkBridge, recordIteration, recordRiskDecision, recordRailsIteration, recordRailsResearch, recordResearch, resumeRun, transitionRun } from "../src/controller.js";
 import { inventoryProject } from "../src/inventory.js";
 import { inspectSupplyChain } from "../src/supply-chain.js";
 import { parseTestEvidence } from "../src/test-evidence.js";
 import { writeRun } from "../src/run-state.js";
+import { createLinkedWorktree } from "./helpers/git-worktree.js";
 
 const testReceipt = () => ({ receiptVersion: 1, id: "11111111-1111-4111-8111-111111111111", kind: "test", commandId: "bundle-rake-test", argv: ["bundle", "exec", "rake", "test"], startedAt: "2026-01-01T00:00:00Z", finishedAt: "2026-01-01T00:00:01Z", durationMs: 1000, exitCode: 0, timedOut: false, output: { redactedSha256: "a".repeat(64), summary: "1 runs, 0 failures" }, testEvidence: { passed: true } });
 const appUpdateReceipt = () => ({ receiptVersion: 1, id: "22222222-2222-4222-8222-222222222222", kind: "rails_app_update", commandId: "rails-app-update", argv: ["bin/rails", "app:update"], startedAt: "2026-01-01T00:00:00Z", finishedAt: "2026-01-01T00:00:01Z", durationMs: 1000, exitCode: 0, timedOut: false, output: { redactedSha256: "b".repeat(64), summary: "No changes" } });
+const iteration = (from, to) => ({ from, to, files: ["Gemfile"], fixes: [{ files: ["Gemfile"], explanation: "Update runtime." }], citations: [{ title: "Ruby", url: "https://www.ruby-lang.org/" }], tests: { passed: true, command: "bundle exec rake test", smoke: "Boot passed." }, validationReceipts: [testReceipt()] });
 
 test("dry-run inventories a Ruby project without writing migration state", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ruby-controller-"));
@@ -20,6 +22,15 @@ test("dry-run inventories a Ruby project without writing migration state", (t) =
   const plan = beginRun({ root, target: "3.4", dryRun: true });
   assert.equal(plan.dryRun, true);
   assert.equal(plan.inventory.framework, "rails");
+  assert.equal(fs.existsSync(path.join(root, ".ruby-upgrades")), false);
+});
+
+test("durable runs reject non-Git projects even if the removed override is supplied", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ruby-controller-no-git-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, "Gemfile"), 'source "https://rubygems.org"\n');
+  fs.mkdirSync(path.join(root, "test"));
+  assert.throws(() => beginRun({ root, target: "3.4" }), /requires a supported linked Git worktree/);
   assert.equal(fs.existsSync(path.join(root, ".ruby-upgrades")), false);
 });
 
@@ -67,45 +78,33 @@ test("supported Rails/RSpec and Minitest fixtures select the expected adapters",
 });
 
 test("state transitions reject skipped phases and persist valid lifecycle steps", (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ruby-lifecycle-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(root, "Gemfile"), 'source "https://rubygems.org"\n');
-  fs.mkdirSync(path.join(root, "test"));
-  const run = beginRun({ root, target: "3.4", allowNonGit: true });
+  const { linked: root } = createLinkedWorktree(t, { prefix: "ruby-lifecycle-", files: { Gemfile: 'source "https://rubygems.org"\n' }, directories: ["test"] });
+  const run = beginRun({ root, target: "3.4" });
   assert.equal(run.report.phase, "initialized");
   assert.throws(() => transitionRun({ root, reportPath: run.reportPath, phase: "hop_validated" }), /Cannot transition/);
   assert.equal(transitionRun({ root, reportPath: run.reportPath, phase: "inventory_complete" }).phase, "inventory_complete");
 });
 
 test("validation preflights report phase before resolving an executor command", (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ruby-validation-preflight-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(root, "Gemfile"), 'source "https://rubygems.org"\n');
-  fs.mkdirSync(path.join(root, "test"));
-  const run = beginRun({ root, target: "3.4", allowNonGit: true });
+  const { linked: root } = createLinkedWorktree(t, { prefix: "ruby-validation-preflight-", files: { Gemfile: 'source "https://rubygems.org"\n' }, directories: ["test"] });
+  const run = beginRun({ root, target: "3.4" });
   assert.throws(() => recordExecutedIteration({ root, reportPath: run.reportPath, validationCommandId: "not-an-executor" }), /after research or a prior checkpoint/);
 });
 
 test("new reports reject asserted iterations before they can skip executed validation", (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ruby-ladder-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(root, "Gemfile"), 'source "https://rubygems.org"\n');
-  fs.mkdirSync(path.join(root, "test"));
-  const run = beginRun({ root, target: "3.4", allowNonGit: true });
+  const { linked: root } = createLinkedWorktree(t, { prefix: "ruby-ladder-", files: { Gemfile: 'source "https://rubygems.org"\n' }, directories: ["test"] });
+  const run = beginRun({ root, target: "3.4" });
   transitionRun({ root, reportPath: run.reportPath, phase: "inventory_complete" });
   assert.throws(() => recordResearch({ root, reportPath: run.reportPath, ladder: ["3.2", "3.4"], citations: [{ title: "Ruby", url: "https://www.ruby-lang.org/" }] }), /exactly one Ruby minor/);
   recordResearch({ root, reportPath: run.reportPath, ladder: ["3.2", "3.3", "3.4"], citations: [{ title: "Ruby", url: "https://www.ruby-lang.org/" }] });
   transitionRun({ root, reportPath: run.reportPath, phase: "research_complete" });
-  const iteration = (from, to) => ({ from, to, files: ["Gemfile"], fixes: [{ files: ["Gemfile"], explanation: "Update runtime." }], citations: [{ title: "Ruby", url: "https://www.ruby-lang.org/" }], tests: { passed: true, command: "bundle exec rake test", smoke: "Boot passed." }, validationReceipts: [testReceipt()] });
   assert.throws(() => recordIteration({ root, reportPath: run.reportPath, iteration: iteration("3.2", "3.4") }), /record-executed-iteration/);
   assert.throws(() => recordIteration({ root, reportPath: run.reportPath, iteration: iteration("3.2", "3.3") }), /record-executed-iteration/);
 });
 
 test("Ruby research accepts a major-series boundary but still rejects a skipped minor", (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ruby-major-boundary-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(root, "Gemfile"), 'ruby "2.4.10"\n'); fs.mkdirSync(path.join(root, "test"));
-  const run = beginRun({ root, target: "3.1", allowNonGit: true });
+  const { linked: root } = createLinkedWorktree(t, { prefix: "ruby-major-boundary-", files: { Gemfile: 'ruby "2.4.10"\n' }, directories: ["test"] });
+  const run = beginRun({ root, target: "3.1" });
   transitionRun({ root, reportPath: run.reportPath, phase: "inventory_complete" });
   const citations = [{ title: "Ruby", url: "https://www.ruby-lang.org/" }];
   assert.throws(() => recordResearch({ root, reportPath: run.reportPath, ladder: ["2.4", "2.5", "2.6", "3.0", "3.1"], citations }), /exactly one Ruby minor/);
@@ -113,12 +112,8 @@ test("Ruby research accepts a major-series boundary but still rejects a skipped 
 });
 
 test("records an approved Rails bridge for the next blocked Ruby hop", (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ruby-rails-bridge-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(root, "Gemfile"), 'source "https://rubygems.org"\ngem "rails", "~> 6.1"\n');
-  fs.writeFileSync(path.join(root, "Gemfile.lock"), "GEM\n  specs:\n    rails (6.1.7.10)\n");
-  fs.mkdirSync(path.join(root, "test"));
-  const run = beginRun({ root, target: "3.1", allowNonGit: true });
+  const { linked: root } = createLinkedWorktree(t, { prefix: "ruby-rails-bridge-", files: { Gemfile: 'source "https://rubygems.org"\ngem "rails", "~> 6.1"\n', "Gemfile.lock": "GEM\n  specs:\n    rails (6.1.7.10)\n" }, directories: ["test"] });
+  const run = beginRun({ root, target: "3.1" });
   transitionRun({ root, reportPath: run.reportPath, phase: "inventory_complete" });
   recordResearch({ root, reportPath: run.reportPath, ladder: ["3.0", "3.1"], citations: [{ title: "Ruby", url: "https://www.ruby-lang.org/" }] });
   transitionRun({ root, reportPath: run.reportPath, phase: "research_complete" });
@@ -130,11 +125,8 @@ test("records an approved Rails bridge for the next blocked Ruby hop", (t) => {
 });
 
 test("records a Rails bridge after a committed Ruby checkpoint", (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ruby-committed-bridge-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(root, "Gemfile"), 'ruby "2.6.10"\ngem "rails", "4.2.11.3"\n');
-  fs.writeFileSync(path.join(root, "Gemfile.lock"), "GEM\n  specs:\n    rails (4.2.11.3)\n"); fs.mkdirSync(path.join(root, "spec"));
-  const started = beginRun({ root, target: "2.7.8", allowNonGit: true });
+  const { linked: root } = createLinkedWorktree(t, { prefix: "ruby-committed-bridge-", files: { Gemfile: 'ruby "2.6.10"\ngem "rails", "4.2.11.3"\n', "Gemfile.lock": "GEM\n  specs:\n    rails (4.2.11.3)\n" }, directories: ["spec"] });
+  const started = beginRun({ root, target: "2.7.8" });
   transitionRun({ root, reportPath: started.reportPath, phase: "inventory_complete" });
   recordResearch({ root, reportPath: started.reportPath, ladder: ["2.6.10", "2.7.8"], citations: [{ title: "Ruby", url: "https://www.ruby-lang.org/" }] });
   transitionRun({ root, reportPath: started.reportPath, phase: "research_complete" });
@@ -144,14 +136,17 @@ test("records a Rails bridge after a committed Ruby checkpoint", (t) => {
 });
 
 test("runs Rails bridges in a separate contiguous lifecycle with app:update evidence", (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "rails-bridge-lifecycle-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(root, "Gemfile"), 'source "https://rubygems.org"\ngem "rails", "~> 6.1"\n');
-  fs.writeFileSync(path.join(root, "Gemfile.lock"), "GEM\n  specs:\n    rails (6.1.7.10)\n"); fs.mkdirSync(path.join(root, "test"));
-  const ruby = beginRun({ root, target: "3.1", allowNonGit: true });
+  const { linked: root } = createLinkedWorktree(t, { prefix: "rails-bridge-lifecycle-", files: { Gemfile: 'source "https://rubygems.org"\ngem "rails", "~> 6.1"\n', "Gemfile.lock": "GEM\n  specs:\n    rails (6.1.7.10)\n" }, directories: ["test"] });
+  const ruby = beginRun({ root, target: "3.1" });
   transitionRun({ root, reportPath: ruby.reportPath, phase: "inventory_complete" }); recordResearch({ root, reportPath: ruby.reportPath, ladder: ["3.0", "3.1"], citations: [{ title: "Ruby", url: "https://www.ruby-lang.org/" }] }); transitionRun({ root, reportPath: ruby.reportPath, phase: "research_complete" });
   recordFrameworkBridge({ root, reportPath: ruby.reportPath, rubyFrom: "3.0", rubyTo: "3.1", railsFrom: "6.1", railsTo: "7.0", rationale: "Rails upgrade required.", citations: [{ title: "Rails", url: "https://guides.rubyonrails.org/upgrading_ruby_on_rails.html" }] }); transitionRun({ root, reportPath: ruby.reportPath, phase: "blocked" });
-  const bridge = beginRailsBridgeRun({ root, rubyReportPath: ruby.reportPath, allowNonGit: true });
+  const nonGit = fs.mkdtempSync(path.join(os.tmpdir(), "rails-bridge-no-git-"));
+  t.after(() => fs.rmSync(nonGit, { recursive: true, force: true }));
+  fs.copyFileSync(path.join(root, "Gemfile"), path.join(nonGit, "Gemfile"));
+  fs.copyFileSync(path.join(root, "Gemfile.lock"), path.join(nonGit, "Gemfile.lock"));
+  writeRun(nonGit, ruby.reportPath, JSON.parse(fs.readFileSync(path.join(root, ruby.reportPath), "utf8")));
+  assert.throws(() => beginRailsBridgeRun({ root: nonGit, rubyReportPath: ruby.reportPath }), /requires a supported linked Git worktree/);
+  const bridge = beginRailsBridgeRun({ root, rubyReportPath: ruby.reportPath });
   transitionRun({ root, reportPath: bridge.reportPath, phase: "inventory_complete" });
   assert.throws(() => recordRailsResearch({ root, reportPath: bridge.reportPath, ladder: ["6.1", "7.1"], citations: [{ title: "Rails", url: "https://guides.rubyonrails.org/upgrading_ruby_on_rails.html" }] }), /contiguous/);
   recordRailsResearch({ root, reportPath: bridge.reportPath, ladder: ["6.1", "7.0"], citations: [{ title: "Rails", url: "https://guides.rubyonrails.org/upgrading_ruby_on_rails.html" }] }); transitionRun({ root, reportPath: bridge.reportPath, phase: "research_complete" });
@@ -160,10 +155,8 @@ test("runs Rails bridges in a separate contiguous lifecycle with app:update evid
 });
 
 test("records dependency findings only on a validated uncommitted hop", (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ruby-dependency-review-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(root, "Gemfile"), 'ruby "3.0.0"\n'); fs.mkdirSync(path.join(root, "test"));
-  const started = beginRun({ root, target: "3.1.0", allowNonGit: true });
+  const { linked: root } = createLinkedWorktree(t, { prefix: "ruby-dependency-review-", files: { Gemfile: 'ruby "3.0.0"\n' }, directories: ["test"] });
+  const started = beginRun({ root, target: "3.1.0" });
   assert.throws(() => recordDependencyReview({ root, reportPath: started.reportPath, compatibility: "Compatible.", licenses: "No changes." }), /validated/);
   const run = JSON.parse(fs.readFileSync(path.join(root, started.reportPath), "utf8"));
   const fingerprint = { algorithm: "sha256", headSha: "a".repeat(40), diffSha256: "b".repeat(64) };
@@ -175,17 +168,14 @@ test("records dependency findings only on a validated uncommitted hop", (t) => {
 });
 
 test("discards a validated uncommitted Rails iteration so the hop can be re-validated", (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "rails-discard-iteration-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(root, "Gemfile"), 'source "https://rubygems.org"\ngem "rails", "~> 7.0"\n');
-  fs.writeFileSync(path.join(root, "Gemfile.lock"), "GEM\n  specs:\n    rails (7.0.10)\n"); fs.mkdirSync(path.join(root, "test"));
-  const ruby = beginRun({ root, target: "3.1", allowNonGit: true });
+  const { linked: root } = createLinkedWorktree(t, { prefix: "rails-discard-iteration-", files: { Gemfile: 'source "https://rubygems.org"\ngem "rails", "~> 7.0"\n', "Gemfile.lock": "GEM\n  specs:\n    rails (7.0.10)\n" }, directories: ["test"] });
+  const ruby = beginRun({ root, target: "3.1" });
   transitionRun({ root, reportPath: ruby.reportPath, phase: "inventory_complete" });
   recordResearch({ root, reportPath: ruby.reportPath, ladder: ["3.0", "3.1"], citations: [{ title: "Ruby", url: "https://www.ruby-lang.org/" }] });
   transitionRun({ root, reportPath: ruby.reportPath, phase: "research_complete" });
   recordFrameworkBridge({ root, reportPath: ruby.reportPath, rubyFrom: "3.0", rubyTo: "3.1", railsFrom: "7.0", railsTo: "7.1", rationale: "Rails upgrade required.", citations: [{ title: "Rails", url: "https://guides.rubyonrails.org/upgrading_ruby_on_rails.html" }] });
   transitionRun({ root, reportPath: ruby.reportPath, phase: "blocked" });
-  const bridge = beginRailsBridgeRun({ root, rubyReportPath: ruby.reportPath, allowNonGit: true });
+  const bridge = beginRailsBridgeRun({ root, rubyReportPath: ruby.reportPath });
   transitionRun({ root, reportPath: bridge.reportPath, phase: "inventory_complete" });
   recordRailsResearch({ root, reportPath: bridge.reportPath, ladder: ["7.0", "7.1"], citations: [{ title: "Rails", url: "https://guides.rubyonrails.org/upgrading_ruby_on_rails.html" }] });
   transitionRun({ root, reportPath: bridge.reportPath, phase: "research_complete" });
@@ -202,4 +192,40 @@ test("discards a validated uncommitted Rails iteration so the hop can be re-vali
   assert.equal(discarded.discardedIterations.length, 1);
   assert.equal(discarded.discardedIterations[0].iteration.from, "7.0");
   assert.throws(() => discardLastRailsIteration({ root, reportPath: bridge.reportPath, reason: "Already discarded." }), /validated/);
+});
+
+test("a latest approved decision supersedes a paused risk at the iteration gate", (t) => {
+  const { linked: root } = createLinkedWorktree(t, { prefix: "ruby-risk-gate-", files: { Gemfile: 'ruby "3.3.0"\n' }, directories: ["test"] });
+  const started = beginRun({ root, target: "3.4" });
+  transitionRun({ root, reportPath: started.reportPath, phase: "inventory_complete" });
+  recordResearch({ root, reportPath: started.reportPath, ladder: ["3.3", "3.4"], citations: [{ title: "Ruby", url: "https://www.ruby-lang.org/" }] });
+  transitionRun({ root, reportPath: started.reportPath, phase: "research_complete" });
+  const run = JSON.parse(fs.readFileSync(path.join(root, started.reportPath), "utf8"));
+  delete run.validationReceiptsRequired;
+  writeRun(root, started.reportPath, run);
+  const legacyIteration = iteration("3.3", "3.4");
+  delete legacyIteration.validationReceipts;
+
+  recordRiskDecision({ root, reportPath: started.reportPath, risk: "runtime-support", decision: "paused", evidence: "Needs review." });
+  assert.throws(() => recordIteration({ root, reportPath: started.reportPath, iteration: legacyIteration }), /Resolve every detected risk/);
+  recordRiskDecision({ root, reportPath: started.reportPath, risk: "runtime-support", decision: "approved", evidence: "Review completed." });
+  assert.equal(recordIteration({ root, reportPath: started.reportPath, iteration: legacyIteration }).iterations.length, 1);
+});
+
+test("a latest approved decision supersedes a blocked risk at completion", (t) => {
+  const { linked: root } = createLinkedWorktree(t, { prefix: "ruby-risk-completion-", files: { Gemfile: 'ruby "3.3.0"\n' }, directories: ["test"] });
+  const started = beginRun({ root, target: "3.4" });
+  recordRiskDecision({ root, reportPath: started.reportPath, risk: "runtime-support", decision: "blocked", evidence: "Unsupported dependency." });
+  const run = JSON.parse(fs.readFileSync(path.join(root, started.reportPath), "utf8"));
+  delete run.validationReceiptsRequired;
+  run.phase = "committed";
+  run.research = { ladder: ["3.3", "3.4"], citations: [{ title: "Ruby", url: "https://www.ruby-lang.org/" }] };
+  const completedIteration = iteration("3.3", "3.4");
+  delete completedIteration.validationReceipts;
+  run.iterations = [{ ...completedIteration, status: "complete", checkpointSha: run.expectedHead }];
+  writeRun(root, started.reportPath, run);
+
+  assert.throws(() => transitionRun({ root, reportPath: started.reportPath, phase: "complete" }), /Unresolved risks/);
+  recordRiskDecision({ root, reportPath: started.reportPath, risk: "runtime-support", decision: "approved", evidence: "Dependency replaced." });
+  assert.equal(transitionRun({ root, reportPath: started.reportPath, phase: "complete" }).status, "complete");
 });

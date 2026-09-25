@@ -18,4 +18,5 @@ jobs:
           node-version: 22
       - run: npm test
       - run: npm pack --dry-run
-      - run: npm exec --yes --package=opencode-ai@1.18.30 -- sh -c 'OPENCODE_RUNTIME_E2E=1 npm run test:opencode'
+      - run: npm install --no-save --no-package-lock opencode-ai@1.18.30
+      - run: OPENCODE_RUNTIME_E2E=1 npm run test:opencode

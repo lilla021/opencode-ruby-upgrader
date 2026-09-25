@@ -34,10 +34,9 @@ jobs:
           test "v${PKG_VER}" = "$GITHUB_REF_NAME"
       # opencode-ai ships its real binary in `postinstall`
       # (bin: opencode -> bin/opencode.exe). It MUST be installed as a real
-      # dependency so lifecycle scripts actually run. `npm exec --package=…`
-      # (a.k.a. npx) installs into a throwaway cache with --ignore-scripts
-      # semantics, so the `opencode` bin never materializes and the runtime
-      # smoke test fails with "postinstall script was not run".
+      # dependency so lifecycle scripts actually run. npm 11 blocks dependency
+      # install scripts by default, so package.json narrowly approves this
+      # reviewed, pinned opencode-ai version via `allowScripts`.
       - run: npm install --no-save --no-package-lock opencode-ai@1.18.30
       - run: OPENCODE_RUNTIME_E2E=1 npm run test:opencode
       - run: npm pack --dry-run

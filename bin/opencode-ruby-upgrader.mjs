@@ -13,13 +13,13 @@ const option = (name) => { const index = args.indexOf(name); return index >= 0 ?
 const options = (name) => args.flatMap((argument, index) => argument === name && args[index + 1] ? [args[index + 1]] : []);
 const reportOption = () => option("--report");
 const citation = (value) => { const [title, url] = (value ?? "").split("|"); return { title, url }; };
-const usage = "Usage: opencode-ruby-upgrader <preflight|dashboard|begin|begin-rails-bridge|prepare-target-runtime|status|transition|record-research|record-rails-research|record-risk|record-framework-bridge|record-executed-iteration|record-executed-rails-iteration|discard-pending-app-update|record-dependency-review|inventory|supply-chain|git-capabilities|commit-hop|commit-rails-hop|resume|release-lock> [--help]";
+const usage = "Usage: opencode-ruby-upgrader <preflight|dashboard|begin|begin-rails-bridge|prepare-target-runtime|status|transition|record-research|record-rails-research|record-risk|record-framework-bridge|record-executed-iteration|record-executed-rails-iteration|discard-pending-app-update|discard-last-rails-iteration|record-dependency-review|inventory|supply-chain|git-capabilities|commit-hop|commit-rails-hop|resume|release-lock> [--help]";
 if (command === "help" || args.includes("--help")) {
   console.log(`${usage}\n\nUse status --summary for a concise report view. release-lock is stale-session recovery only and requires --force.`);
 } else if (command === "preflight") {
   const result = inspectWorktree();
   if (args.includes("--json")) console.log(JSON.stringify(result, null, 2));
-  else if (result.ok && result.mode === "non-git") console.log("✓ No Git repository detected; proceeding without Git checkpoints or worktree isolation.");
+  else if (result.ok && result.mode === "non-git") console.log("No Git repository detected. Dry-run inventory is available, but durable migrations require a linked Git worktree.");
   else if (result.ok) console.log(`✓ Linked worktree: ${result.root}\n✓ Branch: ${result.branch}\n✓ Starting commit: ${result.sha}\n✓ Remote writes: disabled`);
   else console.error(`${setupInstructions(result)}\n\nPreflight blocked: ${result.reason}`);
   process.exitCode = result.ok ? 0 : 1;
@@ -28,14 +28,14 @@ if (command === "help" || args.includes("--help")) {
   const address = server.address();
   console.log(`Ruby Upgrade Workspace: http://127.0.0.1:${address.port}`);
 } else if (command === "begin") {
-  try { console.log(JSON.stringify(beginRun({ target: option("--target"), dryRun: args.includes("--dry-run"), stopAfterHop: args.includes("--stop-after-hop"), allowNonGit: args.includes("--allow-non-git") }), null, 2)); }
+  try { console.log(JSON.stringify(beginRun({ target: option("--target"), dryRun: args.includes("--dry-run"), stopAfterHop: args.includes("--stop-after-hop") }), null, 2)); }
   catch (error) { console.error(`Run start blocked: ${error.message}`); process.exitCode = 1; }
 } else if (command === "begin-rails-bridge") {
-  try { console.log(JSON.stringify(beginRailsBridgeRun({ rubyReportPath: option("--ruby-report"), dryRun: args.includes("--dry-run"), stopAfterHop: args.includes("--stop-after-hop"), allowNonGit: args.includes("--allow-non-git") }), null, 2)); }
+  try { console.log(JSON.stringify(beginRailsBridgeRun({ rubyReportPath: option("--ruby-report"), dryRun: args.includes("--dry-run"), stopAfterHop: args.includes("--stop-after-hop") }), null, 2)); }
   catch (error) { console.error(`Rails bridge start blocked: ${error.message}`); process.exitCode = 1; }
 } else if (command === "prepare-target-runtime") {
   try {
-    if (!option("--ruby") || args.some((argument) => !["--ruby", "--report", option("--ruby"), option("--report")].includes(argument))) throw new Error("Usage: prepare-target-runtime --ruby <x.y.z> [--report .ruby-upgrades/runs/<run>.json]");
+    if (!option("--ruby")) throw new Error("Usage: prepare-target-runtime --ruby <x.y.z> [--report .ruby-upgrades/runs/<run>.json]");
     console.log(JSON.stringify(prepareTargetRuntime({ ruby: option("--ruby"), reportPath: option("--report") }), null, 2));
   } catch (error) { console.error(`Target runtime preparation blocked: ${error.message}`); process.exitCode = 1; }
 } else if (command === "status") {

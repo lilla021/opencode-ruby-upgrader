@@ -1,3 +1,9 @@
 node_modules/
 *.tgz
 .DS_Store
+
+# Local OpenCode/session working notes; never commit or publish these.
+LEARNING_PATH.md
+LOCAL_TEST_PLAN.md
+RESTART_HANDOFF.md
+TODO.md

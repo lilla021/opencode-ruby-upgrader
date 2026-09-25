@@ -31,18 +31,19 @@ const requiredRisksFor = (supplyChain, gitCapabilities) => [
   ...(gitCapabilities.shallow ? ["shallow-clone"] : []), ...(gitCapabilities.sparseCheckout ? ["sparse-checkout"] : []),
   ...(gitCapabilities.submodules ? ["submodules"] : []), ...(gitCapabilities.lfsConfigured ? ["git-lfs"] : [])
 ];
-const assertApprovedRisks = (run) => {
+const hasUnapprovedRisks = (run) => {
   const decisions = new Map(run.riskDecisions.map((risk) => [risk.risk, risk.decision]));
-  if ((run.requiredRisks ?? []).some((risk) => decisions.get(risk) !== "approved") || [...decisions.values()].some((decision) => decision !== "approved")) throw new Error("Resolve every detected risk with an explicit approval before recording a routine iteration.");
+  return (run.requiredRisks ?? []).some((risk) => decisions.get(risk) !== "approved") || [...decisions.values()].some((decision) => decision !== "approved");
 };
+const assertApprovedRisks = (run) => { if (hasUnapprovedRisks(run)) throw new Error("Resolve every detected risk with an explicit approval before recording a routine iteration."); };
 
-export function beginRun({ root = process.cwd(), target, dryRun = false, stopAfterHop = false, allowNonGit = false } = {}) {
+export function beginRun({ root = process.cwd(), target, dryRun = false, stopAfterHop = false } = {}) {
   if (!target || !rubyVersion.test(target)) throw new Error("Provide --target as a Ruby version such as 3.4 or 3.4.1.");
   const preflight = inspectWorktree(root); const inventory = inventoryProject(root); const supplyChain = inspectSupplyChain(root); const gitCapabilities = inspectGitCapabilities(root);
   const plan = { preflight, inventory, supplyChain, gitCapabilities, targetRuby: target, dryRun, stopAfterHop };
-  if (dryRun || !preflight.ok) return plan;
+  if (dryRun) return plan;
+  if (!preflight.ok || preflight.mode !== "linked-worktree") throw new Error("A durable migration requires a supported linked Git worktree.");
   if (!inventory.supported || inventory.requiresDecision) throw new Error("A durable migration requires a Gemfile and a recognized executable test adapter. Supply an explicit validation command through a future reviewed adapter instead of guessing.");
-  if (preflight.mode === "non-git" && !allowNonGit) throw new Error("Non-Git runs need explicit consent: rerun begin with --allow-non-git after reviewing the loss of worktree isolation and checkpoint commits.");
   const reportPath = path.join(".ruby-upgrades", "runs", runName());
   const requiredRisks = requiredRisksFor(supplyChain, gitCapabilities);
   const report = {
@@ -57,15 +58,15 @@ export function beginRun({ root = process.cwd(), target, dryRun = false, stopAft
 
 export function runStatus({ root = process.cwd(), reportPath }) { return readRun(root, reportPath); }
 
-export function beginRailsBridgeRun({ root = process.cwd(), rubyReportPath, dryRun = false, stopAfterHop = false, allowNonGit = false } = {}) {
+export function beginRailsBridgeRun({ root = process.cwd(), rubyReportPath, dryRun = false, stopAfterHop = false } = {}) {
   const rubyRun = readRun(root, rubyReportPath);
   if (rubyRun.reportType === "rails_bridge" || rubyRun.phase !== "blocked" || rubyRun.status !== "blocked" || !rubyRun.frameworkBridge) throw new Error("A Rails bridge can start only from a blocked Ruby run with an approved compatibility bridge.");
   const preflight = inspectWorktree(root); const inventory = inventoryProject(root); const supplyChain = inspectSupplyChain(root); const gitCapabilities = inspectGitCapabilities(root); const bridge = rubyRun.frameworkBridge;
   const plan = { preflight, inventory, supplyChain, gitCapabilities, bridge, dryRun, stopAfterHop };
-  if (dryRun || !preflight.ok) return plan;
+  if (dryRun) return plan;
+  if (!preflight.ok || preflight.mode !== "linked-worktree") throw new Error("A durable Rails bridge requires a supported linked Git worktree.");
   if (!inventory.rails?.resolvedVersion || series(inventory.rails.resolvedVersion) !== series(bridge.railsFrom)) throw new Error("The current Gemfile.lock must still resolve the Rails version recorded by the blocked Ruby run.");
-  if (preflight.mode === "non-git" && !allowNonGit) throw new Error("Non-Git Rails bridges need explicit consent: rerun with --allow-non-git.");
-  if (preflight.mode !== "non-git" && (preflight.branch !== rubyRun.branch || preflight.sha !== rubyRun.expectedHead)) throw new Error("Rails bridge must start on the blocked Ruby run's recorded branch and checkpoint SHA.");
+  if (preflight.branch !== rubyRun.branch || preflight.sha !== rubyRun.expectedHead) throw new Error("Rails bridge must start on the blocked Ruby run's recorded branch and checkpoint SHA.");
   const reportPath = path.join(".ruby-upgrades", "runs", runName());
   const report = { schemaVersion: 2, validationReceiptsRequired: true, reportType: "rails_bridge", runId: crypto.randomUUID(), title: `Rails bridge ${bridge.railsFrom} to ${bridge.railsTo}`, status: "in_progress", phase: "initialized", startedAt: new Date().toISOString(), targetRails: bridge.railsTo, targetRailsPinnedAt: new Date().toISOString(), branch: preflight.branch ?? null, worktreeRoot: preflight.root ?? root, startingSha: preflight.sha ?? null, expectedHead: preflight.sha ?? null, control: { stopAfterHop }, inventory, supplyChain, gitCapabilities, bridge: { rubyReportPath, rubyRunId: rubyRun.runId, rubyFrom: bridge.rubyFrom, rubyTo: bridge.rubyTo, railsFrom: bridge.railsFrom, railsTo: bridge.railsTo, approvedAt: bridge.recordedAt }, research: { ladder: [], citations: [] }, riskDecisions: [], requiredRisks: requiredRisksFor(supplyChain, gitCapabilities), summary: ["Rails bridge initialized from blocked Ruby compatibility decision."], iterations: [], sessionSummary: "" };
   const lock = acquireRunLock(root, reportPath); report.lockNonce = lock.nonce;
@@ -215,7 +216,7 @@ function assertCompletion(run) {
   const target = run.reportType === "rails_bridge" ? run.targetRails : run.targetRuby;
   if (!final || series(final.to) !== series(target)) throw new Error("A run can complete only after the final validated iteration reaches its pinned target.");
   if (series(run.research.ladder.at(-1)) !== series(target)) throw new Error("Research ladder does not reach its pinned target.");
-  if (run.riskDecisions.some((risk) => risk.decision !== "approved")) throw new Error("Unresolved risks prevent completion.");
+  if (hasUnapprovedRisks(run)) throw new Error("Unresolved risks prevent completion.");
   if (final.checkpointSha !== run.expectedHead) throw new Error("The final iteration must be committed through the checkpoint gate before completion.");
 }
 

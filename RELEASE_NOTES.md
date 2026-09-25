@@ -1,8 +1,10 @@
 # opencode-ruby-upgrader — release notes
 
-## v0.1.1 — first automated release
+## v0.1.2 — first automated release
 
-Published from CI via npm trusted publishing (OIDC) with provenance. No behavior change from v0.1.0; this release verifies the automated pipeline end to end: tag push → environment approval → `npm test` → OIDC publish with provenance attestation.
+This release uses npm trusted publishing (OIDC) with provenance from protected CI. It has no plugin behavior change from v0.1.0; it verifies the automated pipeline end to end: tag push → environment approval → `npm test` → pinned OpenCode runtime smoke test → OIDC publish with provenance attestation.
+
+`v0.1.1` was tagged but not published after its release gate correctly stopped on the OpenCode runtime smoke test. The gate now explicitly approves only the reviewed `opencode-ai@1.18.30` install script required to materialize the OpenCode binary under npm 11.
 
 ## v0.1.0 — initial public release
 

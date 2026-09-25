@@ -3,10 +3,10 @@
 Complete every item before pushing a `v*` tag.
 
 - [x] Create `github.com/lilla021/opencode-ruby-upgrader`; push the reviewed `main` branch.
-- [ ] Configure the GitHub `npm-release` environment with required approval and tag restriction `v*`.
-- [x] First-publish bootstrap plan: publish `v0.1.0` manually from the workstation once with 2FA (npm policy requires the package to exist before OIDC trusted publishing or staged publishing can be configured — see `npm/cli#8544`). No long-lived token is needed for this bootstrap.
+- [x] Configure the GitHub `npm-release` environment with required approval and tag restriction `v*`.
+- [x] Published `v0.1.0` manually from the workstation once with 2FA (npm policy required the package to exist before OIDC trusted publishing could be configured — see `npm/cli#8544`). No long-lived token was used for this bootstrap.
 - [x] After v0.1.0 exists: configure npm Trusted Publishing (OIDC) for `opencode-ruby-upgrader` bound to `.github/workflows/release.yml` + `npm-release` environment; CI then publishes with `npm publish --provenance` using no stored secret. Optionally restrict the trusted publisher to stage-only for later versions.
-- [x] Confirm `opencode-ruby-upgrader` currently returns npm registry 404 and is available for first publication.
+- [x] Confirmed `opencode-ruby-upgrader` returned npm registry 404 and was available before its first publication.
 - [x] Run `npm test` and `npm pack --dry-run` from the release candidate.
 - [x] Install latest OpenCode, load this package from a local `file://` plugin path, restart OpenCode, and confirm `/ruby-upgrade` plus its permission prompts.
 - [x] Run a supported Ruby fixture in a linked Git worktree: complete one hop, inspect the local commit/report/dashboard, then exercise one risk pause.
