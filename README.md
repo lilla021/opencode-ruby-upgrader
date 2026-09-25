@@ -78,6 +78,10 @@ As an example, here is one such run rendered in the dashboard — per-hop summar
 
 ![Example of the local evidence dashboard](docs/dashboard.png)
 
+The same reports open as a vault — each run is a Markdown note paired with its JSON record:
+
+![Example vault view: run reports as paired Markdown and JSON notes](docs/vault.png)
+
 Launch the local-only dashboard from the repository worktree:
 
 ```bash
