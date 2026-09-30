@@ -1,5 +1,38 @@
 # opencode-ruby-upgrader — release notes
 
+## v0.1.6 — reader path and CI coverage
+
+No runtime change. The agent's commands, permission policy, commit gate, and report format are untouched. This release restructures the public documentation and closes a CI coverage gap.
+
+**Scope**
+
+The README was reordered into a reader-state funnel — install, run it small, does it work, what it refuses, what backs that, what you get, how to recover, what it cannot prove — so each section answers the question a reader has at that point:
+
+- `Install` is now first and reads as three numbered steps. It previously arrived fifth, with nothing earlier stating that this package is an OpenCode plugin.
+- `Security boundaries` now sits directly after `Safety model`. Intent and enforcement are halves of one argument and had been separated by two unrelated sections.
+- The pre-flight flags split out of the recovery material into `Before you run it`, immediately after Quick start where `--dry-run` is first mentioned.
+- A new `Requirements` section carries the Node/Git/Docker floors and moves the supported-adapter qualification from position ten to before a reader creates a worktree.
+- A new `Troubleshooting` section collects the `EBADENGINE` warning, a missing `/ruby-upgrade` command, and uninstall.
+- A new `Privacy` section gives the previously unlinked `PRIVACY.md` and `SECURITY.md` an entry point in the packaged README.
+- `Contributing` is separated from `Product limits`, so maintainer test instructions no longer sit inside an end-user section.
+- Install now covers the OpenCode prerequisite and config registration for readers new to OpenCode, verified against the current plugin documentation.
+- `Proof of work` is renamed `Validated end-to-end run`.
+- Long paragraphs in `Safety model` and `Security boundaries` are split, and the agent's prohibitions are now a list.
+- The Rails-bridge lifecycle moves to a standalone [`docs/rails-bridge.md`](docs/rails-bridge.md) reference, so `Recovery` ends on the `git revert` guidance instead of burying it.
+- README links to companion documents and both screenshots are now pinned to the release tag instead of resolving against `main`. The registry page previously showed whatever `main` happened to contain, which could drift ahead of the installed version. The release gate now repoints them each release.
+
+**CI**
+
+`ci.yml` runs the test suite, pack check, and pinned-runtime smoke test across Node 22, 24, and 26. CI previously exercised Node 22 only while `engines.node` declared `>=22.5.0`, leaving most of the advertised support range untested. Both workflows pin `npm@11.16.0` so the matrix varies Node rather than npm. Publishing remains a single Node 22 job in `release.yml`, since every matrix leg would attempt the same version.
+
+**Supported adapters:** unchanged — Bundler projects using Rails, RSpec, or Minitest; other stacks receive an inventory and require a user-supplied validation command.
+
+**Known limitations:** unchanged. The credential scanner remains heuristic and reports remain local mutable JSON, bounded by the user and local filesystem permissions. See Product limits in the README.
+
+**Rollback:** `npm install opencode-ruby-upgrader@0.1.5`. The command surface and on-disk format are identical across this release, so no report conversion is required.
+
+Published through the same protected-CI gate.
+
 ## v0.1.5 — registry visuals
 
 No functional change. The npm package page now renders its README images: the dashboard and vault-view screenshots moved from relative paths to absolute GitHub URLs, so they display on the registry in addition to GitHub.

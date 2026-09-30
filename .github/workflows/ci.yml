@@ -11,12 +11,23 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Mirrors the engines.node floor (>=22.5.0) across current Node lines, so
+        # the declared support range is actually exercised. release.yml publishes
+        # from Node 22 only -- one publish, not three.
+        node-version: [22, 24, 26]
     steps:
       # Pinned to immutable commit SHAs (actions runtime hardening).
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # actions/checkout@v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node-version }}
+      # Pin npm so this matrix varies Node, not npm. `allowScripts` (npm >= 11)
+      # is load-bearing for the opencode-ai postinstall below, and release.yml
+      # publishes with this same npm version.
+      - run: npm install -g npm@11.16.0
       - run: npm test
       - run: npm pack --dry-run
       - run: npm install --no-save --no-package-lock opencode-ai@1.18.30

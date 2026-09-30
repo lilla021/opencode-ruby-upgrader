@@ -5,6 +5,7 @@ Complete every item before pushing a `v*` tag. The protected `npm-release` envir
 ## Before every release
 
 - [ ] Bump the version and update [RELEASE_NOTES.md](RELEASE_NOTES.md): scope, supported adapters, known limitations, rollback.
+- [ ] Repoint the README's tag-pinned links to the new version tag: `E2E_EVIDENCE.md`, `PRIVACY.md`, `SECURITY.md`, `docs/rails-bridge.md`, and both screenshot URLs. They are pinned to a tag so the registry page always shows the docs of the installed version rather than whatever `main` currently says; leaving them on the previous tag makes the published page drift behind the release.
 - [ ] Review the package metadata (name, description, keywords, `repository`, `bugs`, `homepage`) and the packed-file list with `npm pack --dry-run`.
 - [ ] Run `npm test`; confirm the release workflow's runtime smoke gate passes with the pinned OpenCode runtime.
 - [ ] Confirm no credentials, personal data, or local paths appear in the packed files, README, SECURITY.md, PRIVACY.md, or release notes.
