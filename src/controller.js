@@ -142,7 +142,7 @@ function recordRailsIterationInternal({ root = process.cwd(), reportPath, iterat
 export function recordRailsIteration(options = {}) { return recordRailsIterationInternal(options); }
 
 export function recordExecutedIteration({ root = process.cwd(), reportPath, iteration, validationCommandId }) {
-  const run = validationPreflight(root, reportPath, false); const receipt = executeValidation({ root, inventory: run.inventory, commandId: validationCommandId });
+  const run = validationPreflight(root, reportPath, false); const receipt = executeValidation({ root, inventory: run.inventory, commandId: validationCommandId, expectedRuntime: { runId: run.runId, reportPath } });
   if (receipt.kind !== "test" || receipt.exitCode !== 0 || receipt.testEvidence?.passed !== true) throw new Error(`Validation failed; receipt ${receipt.id} was not recorded as a passing hop.`);
   return recordIterationInternal({ root, reportPath, executed: true, iteration: { ...iteration, tests: { ...receipt.testEvidence, smoke: iteration?.tests?.smoke }, validationReceipts: [receipt] } });
 }
@@ -150,7 +150,7 @@ export function recordExecutedIteration({ root = process.cwd(), reportPath, iter
 export function recordExecutedRailsIteration({ root = process.cwd(), reportPath, iteration, testValidationCommandId }) {
   const run = validationPreflight(root, reportPath, true);
   if (!run.pendingAppUpdate) {
-    const updateReceipt = executeValidation({ root, inventory: run.inventory, commandId: "rails-app-update" });
+    const updateReceipt = executeValidation({ root, inventory: run.inventory, commandId: "rails-app-update", expectedRuntime: { runId: run.runId, reportPath } });
     if (updateReceipt.exitCode !== 0) throw new Error("app:update failed; Rails hop was not recorded.");
     run.pendingAppUpdate = updateReceipt;
     writeRun(root, reportPath, run);
@@ -159,7 +159,7 @@ export function recordExecutedRailsIteration({ root = process.cwd(), reportPath,
   const updateReceipt = run.pendingAppUpdate;
   const review = { ...iteration?.appUpdateReview, receiptId: updateReceipt.id, executedAt: updateReceipt.startedAt, worktree: updateReceipt.worktree };
   if (!validRailsReviewForExecution(review, updateReceipt)) throw new Error("Review app:update after it executes and bind the review to its receipt and working-tree fingerprint.");
-  const testReceipt = executeValidation({ root, inventory: run.inventory, commandId: testValidationCommandId });
+  const testReceipt = executeValidation({ root, inventory: run.inventory, commandId: testValidationCommandId, expectedRuntime: { runId: run.runId, reportPath } });
   if (testReceipt.kind !== "test" || testReceipt.exitCode !== 0 || testReceipt.testEvidence?.passed !== true) throw new Error("Final validation failed; Rails hop was not recorded.");
   const recorded = recordRailsIterationInternal({ root, reportPath, executed: true, iteration: { ...iteration, tests: { ...testReceipt.testEvidence, smoke: iteration?.tests?.smoke }, validationReceipts: [updateReceipt, testReceipt], appUpdateReview: review } });
   delete recorded.pendingAppUpdate;

@@ -1,9 +1,11 @@
 # Privacy and Local Evidence
 
-This package has no telemetry, analytics, or report-upload feature. It reads and writes migration evidence only in the current project worktree under `.ruby-upgrades/runs/` and serves the dashboard only on `127.0.0.1`.
+This package has no telemetry, analytics, or report-upload feature. It reads and writes migration evidence only in the current project worktree — run reports under `.ruby-upgrades/runs/` and nonsecret runtime metadata in `.ruby-upgrades/runtime.json` — and serves the dashboard only on `127.0.0.1`.
 
 Reports can contain target versions, branch names, commit SHAs, changed-file names, dependency source origins, citations, and bounded validation metadata. Absolute local paths and recognized credentials are redacted, but redaction is best-effort. Do not place secrets, customer data, database dumps, or raw command output in report fields.
 
 Reports may be staged into local checkpoint commits. Review them before committing, pushing, sharing, or opening the dashboard on a shared machine. Delete `.ruby-upgrades/` when evidence retention is no longer needed. The dashboard has no authentication; other local processes able to reach your loopback interface may read its displayed report data.
 
 Dependency installation, tests, and Rails tooling execute project-controlled code with your local user permissions after confirmation. Use an isolated environment for repositories you do not trust.
+
+Preparing an isolated runtime creates local Docker containers, a dedicated network, and pulled images that persist after the run finishes; nothing is uploaded and no port is published to your host. Those resources are labelled with the run ID and a SHA-256 hash of the worktree path, never the path itself. That hash exists only on the Docker resources — it is deliberately kept out of `.ruby-upgrades/` so that committing your upgrade evidence does not publish a guessable fingerprint of your filesystem path. Validation recomputes the hash from the current worktree and compares it against the live labels. Validation receipts written under `.ruby-upgrades/runs/` also record ephemeral Docker identifiers (container IDs, network ID, and image IDs) for traceability of the isolated run; these are local environment metadata, not personal data. Remove containers/networks with `docker rm`/`docker network rm` using the names recorded in `.ruby-upgrades/runtime.json`, and remove pulled images separately if you want the disk space back.

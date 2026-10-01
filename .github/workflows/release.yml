@@ -45,6 +45,14 @@ jobs:
       - run: npm install --no-save --no-package-lock opencode-ai@1.18.30
       - run: OPENCODE_RUNTIME_E2E=1 npm run test:opencode
       - run: npm pack --dry-run
+      # Real container evidence before publishing. Unit tests mock `docker spawn`,
+      # so they cannot catch a wrong readiness probe, a malformed connection URL,
+      # or a driver gem that never loads. A new adapter (e.g. MySQL) must pass a
+      # real mysql:8.4 plus an actual RSpec run through the app's own driver.
+      # Runs last, after the cheap checks, so a broken unit suite fails in
+      # seconds instead of after a ~150MB image pull. GitHub-hosted runners ship
+      # Docker; the script fails fast with a clear error if that ever changes.
+      - run: npm run test:docker:mysql
       # Publishes via npm trusted publishing (OIDC): the "npm-publish" trusted
       # publisher for opencode-ruby-upgrader is configured on npmjs.com. No
       # NODE_AUTH_TOKEN/NPM_TOKEN secret is used; the npm CLI exchanges the

@@ -1,5 +1,28 @@
 # opencode-ruby-upgrader — release notes
 
+## v0.1.7 — isolated MySQL runtime
+
+The isolated validation runtime can now prepare MySQL as well as PostgreSQL.
+
+**Scope**
+
+- `prepare-target-runtime` accepts `--database postgres|mysql`. Without it, the engine is detected from `Gemfile`, `Gemfile.lock`, and `config/database.yml`; `mysql2` selects MySQL, PostgreSQL declarations select PostgreSQL, no declaration defaults to PostgreSQL, and a project declaring both engines stops and asks for an explicit choice instead of guessing.
+- MySQL uses `mysql:8.4` with an empty root password inside the per-run network. Readiness is probed over TCP, because the official entrypoint briefly runs a socket-only server that answers `ping` before the network path works. The test database is created by the container's own client, so preparation never depends on a driver being compiled first.
+- Only `mysql2` is supported. The legacy `mysql` adapter and `trilogy` are deliberately not recognized: this runtime emits `mysql2://` URLs, and claiming other drivers would produce a runtime that provisions successfully and then fails to load the adapter.
+- The runtime manifest now records the selected engine, the database container, and a second image ID for the database alongside the Ruby image ID. Validation attests both, and Docker receipts record the run identity, container IDs, image IDs, and network ID.
+- Ownership is bound to the worktree: resources carry the run ID and a SHA-256 hash of the canonical worktree path, and validation recomputes that hash to compare against the live container labels instead of trusting a value persisted in `runtime.json`. Binding to the running resources is the stronger check — a copied manifest cannot vouch for a foreign worktree — and it keeps a guessable fingerprint of the user's filesystem path out of a file intended to be committed. Legacy version-2 PostgreSQL manifests migrate in place when the existing app container proves the mount, and resources from another run or worktree are refused rather than reused or deleted.
+- Isolation checks are now fail-closed. Validation rejects extra network attachments, published ports, privileged mode, unexpected mounts or commands, unexpected containers on the run network, and database containers with bind mounts — the properties that make a credential-free database safe to expose only to the app container.
+
+**Evidence**
+
+`npm run test:docker:mysql` provisions a real MySQL container, prepares the runtime, connects from a throwaway Rails app through its own `mysql2` driver, asserts a passing RSpec receipt and a secret-free persisted manifest, and verifies it left no resources behind. This is real container evidence, not a mocked unit test; the fixture is generated and deleted by the script. CI runs it on every pull request via the `mysql-runtime` job, and `release.yml` runs it again before publishing.
+
+**Known limitations**
+
+- Prepared containers, networks, and images are not torn down when a run completes or is paused. They persist for reproducibility and are removed manually; the names are recorded in `.ruby-upgrades/runtime.json`.
+- Detection is static text matching. A dynamically computed adapter, or a project whose test environment differs from its other environments, may need an explicit `--database`.
+- No teardown command exists yet; cleanup is documented rather than automated.
+
 ## v0.1.6 — reader path and CI coverage
 
 No runtime change. The agent's commands, permission policy, commit gate, and report format are untouched. This release restructures the public documentation and closes a CI coverage gap.

@@ -32,3 +32,33 @@ jobs:
       - run: npm pack --dry-run
       - run: npm install --no-save --no-package-lock opencode-ai@1.18.30
       - run: OPENCODE_RUNTIME_E2E=1 npm run test:opencode
+
+  mysql-runtime:
+    # Real container evidence for the MySQL adapter. Unit tests mock `docker
+    # spawn`, so they can never catch a wrong readiness probe, a bad connection
+    # URL, or a missing `mysql2` gem. This job provisions a real mysql:8.4 and
+    # runs RSpec through the app's own driver.
+    #
+    # Deliberately NOT a leg of the `test` matrix: it validates Docker and
+    # database behavior rather than Node compatibility, and each extra leg would
+    # re-pull a ~150MB image and recompile the mysql2 native extension for no
+    # added signal. Same single-Node-22 reasoning as publishing in release.yml.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # actions/checkout@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # actions/setup-node@v4
+        with:
+          node-version: 22
+      # Fail with a readable message if a runner ever loses its Docker socket,
+      # instead of surfacing it later as a confusing image-pull error. The
+      # script re-checks this itself, but a preflight names the real problem.
+      - name: Verify Docker is available
+        run: docker version
+      # No dependency install: the smoke script imports src/ modules and Node
+      # builtins only, so it needs no npm dependencies or allowScripts approval.
+      # Headroom over the ~4.5min local run covers the cold image pull, the
+      # Rails/mysql2/rspec bundle, and native mysql2 compilation.
+      - name: MySQL adapter smoke against a real container
+        timeout-minutes: 25
+        run: npm run test:docker:mysql
