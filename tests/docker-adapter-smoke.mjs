@@ -129,13 +129,21 @@ function runSmoke(engine) {
     for (const name of [`${prefix}-app`, `${prefix}-mysql`, `${prefix}-postgres`]) spawnSync("docker", ["rm", "--force", name], { shell: false, stdio: "ignore" });
     spawnSync("docker", ["network", "rm", `${prefix}-network`], { shell: false, stdio: "ignore" });
     try {
-      for (const entry of fs.readdirSync(root, { withFileTypes: true, recursive: true })) {
-        if (entry.isFile()) {
-          try { fs.chmodSync(path.join(entry.parentPath ?? root, entry.name), 0o666); } catch {}
-        }
+      // Walk from root down
+      const stack = [root];
+      while (stack.length > 0) {
+        const d = stack.pop();
+        try {
+          for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+            const full = path.join(d, e.name);
+            if (e.isDirectory()) { try { fs.chmodSync(full, 0o777); } catch {}; stack.push(full); }
+            else { try { fs.chmodSync(full, 0o666); } catch {}; }
+          }
+        } catch {}
+        try { fs.chmodSync(d, 0o777); } catch {}
       }
     } catch {}
-    fs.rmSync(root, { recursive: true, force: true });
+    try { fs.rmSync(root, { recursive: true, force: true }); } catch (err) { console.error("teardown cleanup failed:", err.message); }
   }
 
   if (failure) throw failure;
