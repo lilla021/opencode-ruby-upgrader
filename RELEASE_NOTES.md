@@ -1,5 +1,30 @@
 # opencode-ruby-upgrader — release notes
 
+## v0.1.8 — real-adapter detection and PostgreSQL container evidence
+
+v0.1.7 shipped database detection that had only ever been tested against hand-written fixtures. Running it against real Rails applications found three wrong answers, one of them silent. This release fixes detection and closes the container-evidence gap for the default adapter.
+
+**Scope**
+
+- Detection now matches declarations rather than tokens. Previously `mysql2` matched anywhere in `Gemfile`, `Gemfile.lock`, or `config/database.yml`, while PostgreSQL required an `adapter:` line. That asymmetry meant only a false *MySQL* answer was possible, and it happened: rails/rails ships `activerecord/test/config.example.yml` with `mysql2:` and `postgresql:` as YAML keys naming a profile under `connections:`, and every adapter actually selected is `sqlite3`. The old rule read the `mysql2:` key and silently reported MySQL. A key that names a profile is not a declaration, so it no longer counts.
+- `config/database.yml` now takes precedence over gem declarations. A `gem` line only says a driver is *available*; the YAML says what the app connects to. Discourse is PostgreSQL throughout its `config/database.yml` while carrying `gem "mysql2"` behind an import-mode conditional — previously reported as ambiguous, forcing an explicit flag on an unambiguous project. Redmine's `database.yml.example` selects `mysql2` for every environment with `postgresql` commented out, while its `Gemfile` conditionally declares both engines; it now resolves to MySQL rather than refusing to answer.
+- `Gemfile.lock` is read as a declaration source in its resolved-spec form (`    mysql2 (0.5.6)`, `    pg (1.6.2)`), so a project with a generated or templated `Gemfile` still resolves correctly.
+- Genuinely multi-engine projects still stop and ask. Spree declares both drivers and no `config/database.yml`, and continues to require an explicit choice.
+
+**Evidence**
+
+`npm run test:docker` now proves **both** adapters against real containers: a real `mysql:8.4` and a real `postgres:16-alpine`, each connected from a throwaway Rails app through its own driver, each asserting a passing RSpec receipt, a secret-free persisted manifest, and its own teardown. Detection is deliberately left to run rather than passed `--database`, so a leg that only worked because it was told the answer could not pass. The CI job is now `adapter-runtime` and `release.yml` runs both engines before publishing.
+
+The smoke fixture is now a real Rails application rather than a bare `Gemfile`. That is not cosmetic: PostgreSQL's adapter creates its test database through the app's own `rake db:create`, so it requires a bootable app, while MySQL's creates it server-side and would accept a `Gemfile` alone. The MySQL leg had therefore been passing against a fixture that could never have exercised the PostgreSQL path. The fixture also pins `host: localhost` with a nonexistent user, so a passing run proves `DATABASE_URL` overrides the project's own configuration rather than accidentally agreeing with it.
+
+Detection regressions from real projects are unit-tested from the actual file shapes: the rails/rails profile keys, the Discourse import-mode gem, the Redmine commented-out adapter, the Spree ambiguity, and both `Gemfile.lock` forms.
+
+**Known limitations**
+
+- Prepared containers, networks, and images are not torn down when a run completes or is paused. They persist for reproducibility and are removed manually; the names are recorded in `.ruby-upgrades/runtime.json`. Still no `dispose-target-runtime` command — cleanup remains documented rather than automated, and is the most requested follow-up.
+- Detection is static text matching. A dynamically computed adapter, or a project whose test environment differs from its other environments, may need an explicit `--database`.
+- `--database mysql2://` URLs are emitted for MySQL and `postgresql://` for PostgreSQL; a project relying on driver-specific `database.yml` keys beyond adapter, host, user, and password is not modelled.
+
 ## v0.1.7 — isolated MySQL runtime
 
 The isolated validation runtime can now prepare MySQL as well as PostgreSQL.

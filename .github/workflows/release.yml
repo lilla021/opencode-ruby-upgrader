@@ -48,11 +48,14 @@ jobs:
       # Real container evidence before publishing. Unit tests mock `docker spawn`,
       # so they cannot catch a wrong readiness probe, a malformed connection URL,
       # or a driver gem that never loads. A new adapter (e.g. MySQL) must pass a
-      # real mysql:8.4 plus an actual RSpec run through the app's own driver.
-      # Runs last, after the cheap checks, so a broken unit suite fails in
-      # seconds instead of after a ~150MB image pull. GitHub-hosted runners ship
-      # Docker; the script fails fast with a clear error if that ever changes.
-      - run: npm run test:docker:mysql
+      # real mysql:8.4 and a real postgres:16-alpine plus actual RSpec runs
+      # through each app's own driver. PostgreSQL is proven too because it is the
+      # default adapter and its `createArgs` drive the app's `rake db:create`,
+      # a path a mocked unit test cannot reach. Runs last, after the cheap checks,
+      # so a broken unit suite fails in seconds instead of after a ~150MB image
+      # pull. GitHub-hosted runners ship Docker; the script fails fast with a
+      # clear error if that ever changes.
+      - run: npm run test:docker
       # Publishes via npm trusted publishing (OIDC): the "npm-publish" trusted
       # publisher for opencode-ruby-upgrader is configured on npmjs.com. No
       # NODE_AUTH_TOKEN/NPM_TOKEN secret is used; the npm CLI exchanges the

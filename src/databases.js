@@ -40,7 +40,11 @@ export const databases = Object.freeze({
     startArgs: () => ["--env", "POSTGRES_HOST_AUTH_METHOD=trust", "--env", `POSTGRES_DB=${DB_NAME}`, "postgres:16-alpine"],
     readyArgs: (container) => ["exec", container, "pg_isready", "-U", "postgres", "-d", DB_NAME],
     // Use the app's own Rails task so framework-specific database setup remains
-    // consistent with the project's PostgreSQL adapter.
+    // consistent with the project's PostgreSQL adapter. DATABASE_URL is already
+    // set on the app container and Rails prefers it over database.yml, so a
+    // project pinning `host: localhost` or a socket-only DSN still resolves to
+    // the isolated container -- no rewriting of the config under test, which
+    // would be a source change to the worktree.
     createArgs: ({ appContainer }) => ["exec", appContainer, "bundle", "exec", "rake", "db:create"],
     databaseUrl: (container) => `postgresql://postgres@${container}:5432/${DB_NAME}`,
     ensureReady: ({ probe }) => readyLoop({ probe, attempts: 30, label: "PostgreSQL" })
@@ -75,18 +79,42 @@ export function resolveDatabase(adapter) {
   return databases[key];
 }
 
+// Declarative forms only. A bare word is not a declaration: real
+// `config/database.yml` files carry YAML keys that merely *name* a profile
+// (rails/rails ships `connections:` with `mysql2:` and `postgresql:` keys and
+// only `adapter: sqlite3` in play), and a Gemfile may carry a driver for an
+// unrelated tool. Matching bare tokens made detection asymmetric -- mysql2
+// matched anywhere while postgres required `adapter:` -- so the bias could only
+// ever produce a false MySQL answer, silently.
+const MYSQL = [/\badapter\s*:\s*mysql2\b/i, /\bgem\s*\(?\s*["']mysql2["']/i, /\bmysql2:\/\//i];
+const POSTGRES = [/\badapter\s*:\s*(?:postgresql|postgres)\b/i, /\bgem\s*\(?\s*["']pg["']/i, /\b(?:postgresql|postgres):\/\//i];
+// Gemfile.lock records resolved specs as `    mysql2 (0.5.6)` / `    pg (1.6.2)`.
+const MYSQL_LOCK = /^[ \t]*mysql2 \(/m;
+const POSTGRES_LOCK = /^[ \t]*pg \(/m;
+
 // Best-effort adapter detection from the project's own declarations. An
 // explicit `--database` always wins; this only fills the gap so the common case
 // needs no flag.
 export function detectDatabase(root = process.cwd()) {
   const read = (file) => { try { return fs.readFileSync(path.join(root, file), "utf8"); } catch { return ""; } };
   const uncommented = (contents) => contents.replace(/#.*$/gm, "");
-  const corpus = [read("Gemfile"), read("Gemfile.lock"), read("config/database.yml")].map(uncommented).join("\n");
-  const mysql = /\bmysql2\b/i.test(corpus) || /adapter:\s*mysql2\b/i.test(corpus);
-  const postgres = /\bpg\b/i.test(corpus) || /adapter:\s*(?:postgresql|postgres)\b/i.test(corpus) || /postgresql:\/\//i.test(corpus);
-  if (mysql && postgres) throw new Error("Both MySQL and PostgreSQL were detected. Specify --database mysql or --database postgres.");
-  if (mysql && !postgres) return "mysql";
-  return "postgres";
+  const declares = (contents, lock) => ({
+    mysql: MYSQL.some((re) => re.test(contents)) || (lock && MYSQL_LOCK.test(contents)),
+    postgres: POSTGRES.some((re) => re.test(contents)) || (lock && POSTGRES_LOCK.test(contents)),
+  });
+  const resolve = ({ mysql, postgres }) => {
+    if (mysql && postgres) throw new Error("Both MySQL and PostgreSQL were detected. Specify --database mysql or --database postgres.");
+    return mysql ? "mysql" : postgres ? "postgres" : null;
+  };
+  // `config/database.yml` is what the app actually connects to; a `gem` line
+  // only says a driver is *available*. Discourse, for instance, is PostgreSQL
+  // (`adapter: postgresql` throughout) but carries `gem "mysql2"` behind an
+  // import-mode conditional. OR-ing both files reported that as ambiguous and
+  // needlessly forced an explicit flag on an unambiguous project.
+  const configured = resolve(declares(uncommented(read("config/database.yml")), false));
+  if (configured) return configured;
+  const gems = resolve(declares(`${uncommented(read("Gemfile"))}\n${uncommented(read("Gemfile.lock"))}`, true));
+  return gems ?? "postgres";
 }
 
 export { DB_NAME, NAME };

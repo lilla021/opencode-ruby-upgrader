@@ -33,18 +33,25 @@ jobs:
       - run: npm install --no-save --no-package-lock opencode-ai@1.18.30
       - run: OPENCODE_RUNTIME_E2E=1 npm run test:opencode
 
-  mysql-runtime:
-    # Real container evidence for the MySQL adapter. Unit tests mock `docker
+  adapter-runtime:
+    # Real container evidence for both database adapters. Unit tests mock `docker
     # spawn`, so they can never catch a wrong readiness probe, a bad connection
-    # URL, or a missing `mysql2` gem. This job provisions a real mysql:8.4 and
-    # runs RSpec through the app's own driver.
+    # URL, or a driver gem that never loads. This job provisions a real
+    # mysql:8.4 and a real postgres:16-alpine and runs RSpec through each app's
+    # own driver.
+    #
+    # Both engines are proven here rather than only MySQL. PostgreSQL is the
+    # default, so it is the path most users hit first, and it was the one adapter
+    # that had never run against a real container: its `createArgs` invoke the
+    # app's `rake db:create`, which needs a bootable Rails app, and the earlier
+    # Gemfile-only fixture would have failed if it had been exercised.
     #
     # Deliberately NOT a leg of the `test` matrix: it validates Docker and
     # database behavior rather than Node compatibility, and each extra leg would
-    # re-pull a ~150MB image and recompile the mysql2 native extension for no
-    # added signal. Same single-Node-22 reasoning as publishing in release.yml.
+    # re-pull ~150MB images and recompile a native driver extension for no added
+    # signal. Same single-Node-22 reasoning as publishing in release.yml.
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # actions/checkout@v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # actions/setup-node@v4
@@ -57,8 +64,14 @@ jobs:
         run: docker version
       # No dependency install: the smoke script imports src/ modules and Node
       # builtins only, so it needs no npm dependencies or allowScripts approval.
-      # Headroom over the ~4.5min local run covers the cold image pull, the
-      # Rails/mysql2/rspec bundle, and native mysql2 compilation.
+      # Headroom over the ~9min local run covers both cold image pulls, the
+      # Rails/driver/rspec bundle, and native driver compilation.
       - name: MySQL adapter smoke against a real container
         timeout-minutes: 25
         run: npm run test:docker:mysql
+      # Each engine is a separate step so a failure names the adapter that broke
+      # rather than "the database smoke". Runs second so a MySQL failure still
+      # reports its full teardown check.
+      - name: PostgreSQL adapter smoke against a real container
+        timeout-minutes: 25
+        run: npm run test:docker:postgres

@@ -522,3 +522,44 @@ test("database detection reads the project's own declarations and defaults to Po
   write({});
   assert.equal(detectDatabase(root), "postgres");
 });
+
+// Real-project regressions. Each case is the shape of a file from a maintained
+// Rails application that the pre-0.1.8 detector got wrong or, worse, silently
+// misread. Detection was unit-tested only against hand-written fixtures, which
+// is why all of these looked covered.
+test("detection matches real-world database declarations, not incidental tokens", (t) => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ruby-target-real-")));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const write = (files) => { fs.rmSync(path.join(root, "Gemfile"), { force: true }); fs.rmSync(path.join(root, "Gemfile.lock"), { force: true }); fs.rmSync(path.join(root, "config"), { recursive: true, force: true }); for (const [file, contents] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true }); fs.writeFileSync(path.join(root, file), contents); } };
+
+  // rails/rails activerecord/test/config.example.yml. `mysql2:` and `postgresql:`
+  // are YAML keys naming a profile under `connections:`; every adapter actually
+  // selected is sqlite3. The old bare-token rule matched the `mysql2:` key while
+  // requiring `adapter:` for postgres, so this silently detected MySQL.
+  write({ "config/database.yml": 'connections:\n  mysql2:\n    arunit:\n      username: rails\n\n  postgresql:\n    arunit:\n      min_messages: warning\n\ntest:\n  adapter: sqlite3\n  database: ":memory:"\n' });
+  assert.equal(detectDatabase(root), "postgres", "a YAML key naming a profile is not a declaration");
+
+  // Discourse: PostgreSQL throughout config/database.yml, with `gem "mysql2"`
+  // behind an import-mode conditional in the Gemfile. A gem line only says a
+  // driver is available, so it must not make the project ambiguous.
+  write({ "config/database.yml": "production:\n  adapter: postgresql\n  host: db\ntest:\n  adapter: postgresql\n", Gemfile: 'gem "rails"\n\nif ENV["IMPORT"] == "1"\n  gem "mysql2"\n  gem "redcarpet"\nend\n' });
+  assert.equal(detectDatabase(root), "postgres", "an import-mode gem must not outrank the configured adapter");
+
+  // Redmine: config/database.yml.example declares mysql2 for every environment
+  // with postgresql commented out, while its Gemfile conditionally declares
+  // both engines. The file the app connects to wins.
+  write({ "config/database.yml": "production:\n  adapter: mysql2\n  database: redmine\n#  adapter: postgresql\n#  adapter: sqlite3\n", Gemfile: "adapters.each do |adapter|\n  case adapter.strip\n  when /mysql2/\n    gem 'mysql2', '~> 0.5.0'\n  when /postgresql/\n    gem 'pg', '~> 1.6.2'\n  end\nend\n" });
+  assert.equal(detectDatabase(root), "mysql", "the configured adapter outranks conditional gem declarations");
+
+  // Spree: no config/database.yml in the tree, and both drivers declared. Still
+  // ambiguous -- the fix must not paper over genuine multi-engine projects.
+  write({ Gemfile: 'gem "rails"\ngem "mysql2"\ngem "pg"\n' });
+  assert.throws(() => detectDatabase(root), /Specify --database mysql or --database postgres/);
+
+  // Gemfile.lock is a real declaration source: a Rails app with a generated or
+  // templated Gemfile still names its driver here.
+  write({ "Gemfile.lock": "GEM\n  specs:\n    pg (1.6.2)\n    rails (8.0.0)\n" });
+  assert.equal(detectDatabase(root), "postgres");
+  write({ "Gemfile.lock": "GEM\n  specs:\n    mysql2 (0.5.6)\n    rails (8.0.0)\n" });
+  assert.equal(detectDatabase(root), "mysql");
+});

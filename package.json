@@ -1,6 +1,6 @@
 {
   "name": "opencode-ruby-upgrader",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "A safe, evidence-driven Ruby runtime upgrade agent and local migration dashboard for OpenCode",
   "author": "Priscilla Cournoyer (https://github.com/lilla021)",
   "repository": {
@@ -18,7 +18,9 @@
   },
   "scripts": {
     "test": "node --test tests/*.test.js",
-    "test:docker:mysql": "node tests/docker-mysql-smoke.mjs",
+    "test:docker": "node tests/docker-adapter-smoke.mjs",
+    "test:docker:mysql": "node tests/docker-adapter-smoke.mjs mysql",
+    "test:docker:postgres": "node tests/docker-adapter-smoke.mjs postgres",
     "test:opencode": "node tests/opencode-runtime-smoke.mjs"
   },
   "allowScripts": {
