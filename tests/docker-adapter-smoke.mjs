@@ -128,6 +128,13 @@ function runSmoke(engine) {
     // engine was prepared.
     for (const name of [`${prefix}-app`, `${prefix}-mysql`, `${prefix}-postgres`]) spawnSync("docker", ["rm", "--force", name], { shell: false, stdio: "ignore" });
     spawnSync("docker", ["network", "rm", `${prefix}-network`], { shell: false, stdio: "ignore" });
+    try {
+      for (const entry of fs.readdirSync(root, { withFileTypes: true, recursive: true })) {
+        if (entry.isFile()) {
+          try { fs.chmodSync(path.join(entry.parentPath ?? root, entry.name), 0o666); } catch {}
+        }
+      }
+    } catch {}
     fs.rmSync(root, { recursive: true, force: true });
   }
 
