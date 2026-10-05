@@ -260,7 +260,7 @@ export function recordExecutedBundlerIteration({ root = process.cwd(), reportPat
   const pinned = inventoryBundledWith(root);
   if (bundlerSeries(pinned ?? "") !== bundlerSeries(iteration.to)) throw new Error(`Gemfile.lock still records Bundler ${pinned ?? "none"}; a hop to ${iteration.to} requires the BUNDLED WITH pin to be rewritten first.`);
   if (bundlerSeries(receipt.environment?.bundlerVersion ?? "") !== bundlerSeries(iteration.to)) throw new Error(`Validation executed Bundler ${receipt.environment?.bundlerVersion ?? "an unrecorded version"}, not ${iteration.to}. Re-prepare the target runtime on the new Bundler before recording this hop.`);
-  run.iterations.push({ ...iteration, status: "complete", lockfilePin: pinned }); writeRun(root, reportPath, run); return run;
+  run.iterations.push({ ...iteration, status: "complete", lockfilePin: pinned, tests: { ...receipt.testEvidence, smoke: iteration?.tests?.smoke }, validationReceipts: [receipt] }); writeRun(root, reportPath, run); return run;
 }
 
 export function recordDependencyReview({ root = process.cwd(), reportPath, compatibility, licenses }) {
