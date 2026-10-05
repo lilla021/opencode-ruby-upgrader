@@ -86,6 +86,12 @@ Three flags bound how much a single run can change.
 
 Use `/ruby-upgrade --dry-run` for a no-write inventory and proposed migration assessment; it creates no report, lock, checkpoint, or durable research evidence. Use `/ruby-upgrade --target <version>` (for example `/ruby-upgrade --target 3.4`) to pin an explicit final Ruby version, or `/ruby-upgrade --stop-after-hop` to validate and commit one hop before stopping.
 
+### Local credentials and environment files
+
+`git worktree add` only checks out files tracked by Git. Untracked files (such as `.env`, local credential files, `config/database.yml.local`, or project-specific test environment configuration) are **not** copied from your main worktree to the new linked worktree. If your specs or local test setup require environment variables or credentials to run, you must manually create or copy them into the new worktree (`../<repo>-ruby-<target>/`). The agent never creates, copies, or commits credentials or secrets.
+
+
+
 ## Validated end-to-end run
 
 The agent has completed a real end-to-end migration against a public fixture: [`ruby2-rails4-bootstrap-heroku`](https://github.com/lilla021/ruby2-rails4-bootstrap-heroku) (BSD-2-Clause) moved from **Ruby 2.4.10 / Rails 4.2.11.3** to **Ruby 3.4.10 / Rails 7.1.6** across 15 receipt-backed hops. Every hop was validated by `bundle exec rspec` in an isolated Docker container, then committed as a local checkpoint before the next hop began.
