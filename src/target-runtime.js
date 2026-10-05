@@ -4,6 +4,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { RunStateError, readRun } from "./run-state.js";
 import { NAME, databases, detectDatabase, resolveDatabase } from "./databases.js";
+import { services as serviceAdapters, detectServices, resolveServices } from "./services.js";
 
 const RUNTIME_FILE = "runtime.json";
 const LABEL = "io.opencode-ruby-upgrader.run-id";
@@ -117,7 +118,11 @@ function appMatches(container, root, runtime, db) {
   const env = environment(container);
   const mounts = container?.Mounts ?? [];
   const command = container?.Config?.Cmd ?? [];
-  return container?.State?.Running && container?.Config?.Image === `ruby:${runtime.ruby}` && container?.Config?.WorkingDir === "/app" && mounts.length === 1 && mountedFromRoot(container, root) && command.length === 2 && command[0] === "sleep" && command[1] === "infinity" && onlyNetwork(container, runtime.network) && isolatedContainer(container) && env.RAILS_ENV === "test" && env.DATABASE_URL === db.databaseUrl(runtime.databaseContainer);
+    const servicesMatch = !runtime.services || runtime.services.every((svc) => {
+    const expected = serviceAdapters[svc.type]?.env?.({ container: svc.container }) || {};
+    return Object.entries(expected).every(([k, v]) => env[k] === v);
+  });
+  return container?.State?.Running && container?.Config?.Image === `ruby:${runtime.ruby}` && container?.Config?.WorkingDir === "/app" && mounts.length === 1 && mountedFromRoot(container, root) && command.length === 2 && command[0] === "sleep" && command[1] === "infinity" && onlyNetwork(container, runtime.network) && isolatedContainer(container) && env.RAILS_ENV === "test" && env.DATABASE_URL === db.databaseUrl(runtime.databaseContainer) && servicesMatch;
 }
 function databaseMatches(container, runtime, db) {
   const env = environment(container);
@@ -142,9 +147,13 @@ function selectedRun(root, reportPath) {
   if (!["in_progress", "paused"].includes(run.status)) throw new RunStateError("Target runtime preparation requires an active or paused upgrade run.", "run-not-resumable");
   return { reportPath, run };
 }
-function names(runId, db) {
+function names(runId, db, serviceList = []) {
   const prefix = `ruby-upgrader-${runId}`;
-  return { appContainer: `${prefix}-app`, databaseContainer: `${prefix}-${db.adapter}`, network: `${prefix}-network` };
+  const out = { appContainer: `${prefix}-app`, databaseContainer: `${prefix}-${db.adapter}`, network: `${prefix}-network` };
+  for (const svc of serviceList) {
+    out[`${svc.type}Container`] = `${prefix}-${svc.type}`;
+  }
+  return out;
 }
 function writeRuntime(root, runtime) {
   const file = runtimePath(root, true);
@@ -164,6 +173,7 @@ export function readTargetRuntime(root = process.cwd()) {
       runtime = { ...legacy, database: "postgres", databaseContainer: postgresContainer };
     }
     if (runtime?.version !== 2 || typeof runtime.runId !== "string" || !rubyVersion.test(runtime.ruby ?? "") || !/^sha256:[a-f0-9]{64}$/i.test(runtime.resolvedImageId ?? "") || (runtime.databaseImageId !== undefined && !/^sha256:[a-f0-9]{64}$/i.test(runtime.databaseImageId)) || !runtime.preparation || !Object.hasOwn(databases, runtime.database) || ![runtime.appContainer, runtime.databaseContainer, runtime.network].every((name) => NAME.test(name ?? ""))) throw new Error();
+    if (runtime.services && !Array.isArray(runtime.services)) throw new Error();
     return runtime;
   } catch { throw new Error("Target runtime metadata is invalid. Rerun prepare-target-runtime --ruby <x.y.z>."); }
 }
@@ -172,10 +182,13 @@ export function prepareTargetRuntime({ root = process.cwd(), reportPath, ruby, d
   if (!rubyVersion.test(ruby ?? "")) throw new Error("--ruby must be an exact numeric Ruby version such as 3.4.1.");
   const canonical = canonicalRoot(root);
   const db = resolveDatabase(database ?? detectDatabase(canonical));
+  const detectedServices = detectServices(canonical);
+  const serviceList = resolveServices(detectedServices);
   const selected = selectedRun(canonical, reportPath);
   const run = readRun(canonical, selected.reportPath);
   const bundlerToInstall = run.reportType === "bundler_bridge" ? run.targetBundler : (run.bundlerBridge ? run.bundlerBridge.bundlerTo : undefined) || "2.4.22";
-  const runtime = { version: 2, runId: selected.run.runId, reportPath: selected.reportPath, ruby, database: db.adapter, bundlerToInstall, ...names(selected.run.runId, db) };
+  const runtimeNames = names(selected.run.runId, db, serviceList);
+  const runtime = { version: 2, runId: selected.run.runId, reportPath: selected.reportPath, ruby, database: db.adapter, bundlerToInstall, services: [], ...runtimeNames };
   const owner = identity(runtime.runId, canonical);
   const existing = readTargetRuntime(canonical);
   if (existing && existing.runId !== runtime.runId) {
@@ -187,7 +200,9 @@ export function prepareTargetRuntime({ root = process.cwd(), reportPath, ruby, d
   let app = docker(spawn, ["inspect", runtime.appContainer]);
   let network = docker(spawn, ["network", "inspect", runtime.network]);
   const databaseInspections = new Map(databaseNames.map((name) => [name, docker(spawn, ["inspect", name])]));
-  const resources = [app.status === 0 && parseInspection(app), network.status === 0 && parseInspection(network), ...[...databaseInspections.values()].filter((result) => result.status === 0).map(parseInspection)].filter(Boolean);
+  const serviceNames = serviceList.map((svc) => runtimeNames[`${svc.type}Container`]).filter(Boolean);
+  const serviceInspections = new Map(serviceNames.map((name) => [name, docker(spawn, ["inspect", name])]));
+  const resources = [app.status === 0 && parseInspection(app), network.status === 0 && parseInspection(network), ...[...databaseInspections.values()].filter((result) => result.status === 0).map(parseInspection), ...[...serviceInspections.values()].filter((result) => result.status === 0).map(parseInspection)].filter(Boolean);
 for (const resource of resources) {
     const resourceLabels = labels(resource);
     if (resourceLabels[LABEL] !== owner.runId || (resourceLabels[WORKTREE_LABEL] !== undefined && resourceLabels[WORKTREE_LABEL] !== owner.worktreeHash)) throw new Error("Refusing to use or replace a Docker resource not owned by this run and worktree.");
@@ -195,7 +210,7 @@ for (const resource of resources) {
   const legacy = resources.some((resource) => labels(resource)[WORKTREE_LABEL] === undefined);
   if (legacy && resources.length) {
     if (app.status !== 0 || !mountedFromRoot(parseInspection(app), canonical)) throw new Error("Refusing to migrate legacy Docker resources because ownership by this worktree cannot be established.");
-    for (const [name, result] of [[runtime.appContainer, app], ...databaseInspections]) {
+    for (const [name, result] of [[runtime.appContainer, app], ...databaseInspections, ...serviceInspections]) {
       if (result.status === 0 && docker(spawn, ["rm", "--force", name]).status !== 0) throw new Error("Could not remove a legacy target-runtime container.");
     }
     if (network.status !== 0 && docker(spawn, ["network", "rm", runtime.network]).status !== 0) throw new Error("Could not remove the legacy target-runtime Docker network.");
@@ -227,6 +242,37 @@ for (const resource of resources) {
     try { docker(spawn, ["rm", "--force", runtime.databaseContainer]); } catch {}
     throw error;
   }
+  // Provision additional service containers (evidence-based)
+  const serviceStates = [];
+  for (const svc of serviceList) {
+    const svcContainer = runtimeNames[`${svc.type}Container`];
+    let svcResult = serviceInspections.get(svcContainer) ?? { status: 1 };
+    if (svcResult.status === 0) {
+      const c = parseInspection(svcResult);
+      const expectedEnv = (serviceAdapters[svc.type]?.env?.({ container: svcContainer }) || {});
+      const env = environment(c);
+      const hasBindMount = (c?.Mounts ?? []).some((mount) => mount.Type === "bind");
+      const owned = hasOwnership(c, owner);
+      const matches = c?.State?.Running && c?.Config?.Image === svc.adapter.image && onlyNetwork(c, runtime.network) && isolatedContainer(c) && !hasBindMount && owned && Object.entries(expectedEnv).every(([k, v]) => env[k] === v);
+      if (!matches) {
+        if (docker(spawn, ["rm", "--force", svcContainer]).status !== 0) throw new Error(`Could not replace the prior target-runtime ${svc.adapter.label} container.`);
+        svcResult = docker(spawn, ["inspect", svcContainer]);
+      }
+    }
+    if (svcResult.status !== 0) {
+      if (docker(spawn, ["run", "--detach", "--name", svcContainer, ...ownershipArgs, "--network", runtime.network, ...svc.adapter.startArgs()]).status !== 0) throw new Error(`Could not start the isolated target-runtime ${svc.adapter.label} container.`);
+    }
+    try {
+      svc.adapter.ensureReady({ probe: () => docker(spawn, svc.adapter.readyArgs(svcContainer)) });
+    } catch (error) {
+      try { docker(spawn, ["rm", "--force", svcContainer]); } catch {}
+      throw error;
+    }
+    const svcInspection = inspect(spawn, svcContainer, `Target ${svc.adapter.label} container is unavailable. Rerun prepare-target-runtime --ruby <x.y.z>.`);
+    if (!/^sha256:[a-f0-9]{64}$/i.test(svcInspection?.Image ?? "")) throw new Error(`Target ${svc.adapter.label} image ID is unavailable.`);
+    serviceStates.push({ type: svc.type, container: svcContainer, imageId: svcInspection.Image });
+    runtime.services = serviceStates;
+  }
   if (app.status === 0) {
     const container = parseInspection(app);
     if (!appMatches(container, canonical, runtime, db)) {
@@ -234,7 +280,13 @@ for (const resource of resources) {
       app = docker(spawn, ["inspect", runtime.appContainer]);
     }
   }
-  if (app.status !== 0 && docker(spawn, ["run", "--detach", "--name", runtime.appContainer, ...ownershipArgs, "--network", runtime.network, "--mount", `type=bind,src=${canonical},dst=/app`, "--workdir", "/app", "--env", "RAILS_ENV=test", "--env", `DATABASE_URL=${db.databaseUrl(runtime.databaseContainer)}`, `ruby:${ruby}`, "sleep", "infinity"]).status !== 0) throw new Error("Could not start the target Ruby app container.");
+  const appEnv = ["--env", "RAILS_ENV=test", "--env", `DATABASE_URL=${db.databaseUrl(runtime.databaseContainer)}`];
+  for (const svc of serviceList) {
+    const svcContainer = runtimeNames[`${svc.type}Container`];
+    const envs = serviceAdapters[svc.type]?.env?.({ container: svcContainer }) || {};
+    for (const [k, v] of Object.entries(envs)) appEnv.push("--env", `${k}=${v}`);
+  }
+  if (app.status !== 0 && docker(spawn, ["run", "--detach", "--name", runtime.appContainer, ...ownershipArgs, "--network", runtime.network, "--mount", `type=bind,src=${canonical},dst=/app`, "--workdir", "/app", ...appEnv, `ruby:${ruby}`, "sleep", "infinity"]).status !== 0) throw new Error("Could not start the target Ruby app container.");
   const prepared = bootstrap(spawn, runtime, db, railsProject(canonical));
   const appInspection = inspect(spawn, runtime.appContainer, "Target Ruby app container is unavailable. Rerun prepare-target-runtime --ruby <x.y.z>.");
   const databaseInspection = inspect(spawn, runtime.databaseContainer, `Target ${db.label} container is unavailable. Rerun prepare-target-runtime --ruby <x.y.z>.`);
