@@ -46,27 +46,36 @@ function preparationResult(result) {
   return { sha256: crypto.createHash("sha256").update(output).digest("hex"), bytes: Buffer.byteLength(output) };
 }
 function bootstrap(spawn, runtime, db, rails) {
-  const labels = ["Node.js setup", "Bundler installation", "dependency installation", ...(rails ? [`${db.label} test database initialization`] : []), "Ruby version attestation"];
+  const labels = ["Node.js setup", "Bundler installation", "dependency installation", ...(rails ? [`${db.label} test database initialization`] : []), "Ruby version attestation", "Bundler version attestation"];
   const commands = [
     ["exec", runtime.appContainer, "sh", "-c", NODE_INSTALL],
-    ["exec", runtime.appContainer, "gem", "install", "bundler", "-v", "2.4.22", "--no-document"],
-    ["exec", runtime.appContainer, "bundle", "_2.4.22_", "install"],
+    ["exec", runtime.appContainer, "gem", "install", "bundler", "-v", runtime.bundlerToInstall ?? "2.4.22", "--no-document"],
+    ["exec", runtime.appContainer, "bundle", `_${runtime.bundlerToInstall ?? "2.4.22"}_`, "install"],
     ...(rails ? [db.createArgs({ appContainer: runtime.appContainer, databaseContainer: runtime.databaseContainer })] : []),
-    ["exec", runtime.appContainer, "ruby", "--version"]
+    ["exec", runtime.appContainer, "ruby", "--version"],
+    // Attest the Bundler version actually installed, so the report can warn when
+    // CI/host bundler differs. `gem install` output is advisory; `--version` is
+    // authoritative for what `bundle exec` will actually resolve.
+    ["exec", runtime.appContainer, "bundle", `_${runtime.bundlerToInstall ?? "2.4.22"}_`, "--version"]
   ];
   const results = commands.map((args, index) => {
     const result = docker(spawn, args);
     if (result.status !== 0) throw new Error(`Target runtime bootstrap failed during ${labels[index]}. Rerun prepare-target-runtime --ruby <x.y.z>.`);
     return result;
   });
-  const rubyOutput = `${results.at(-1).stdout ?? ""}${results.at(-1).stderr ?? ""}`;
+  // Index the attestations explicitly rather than from the end of the array:
+  // `ruby --version` is no longer the final command, and an off-by-one here would
+  // validate the Bundler banner against the Ruby regex.
+  const rubyIndex = 3 + (rails ? 1 : 0);
+  const rubyOutput = `${results[rubyIndex].stdout ?? ""}${results[rubyIndex].stderr ?? ""}`;
   if (!new RegExp(`^ruby ${runtime.ruby.replaceAll(".", "\\.")}(?:p\\d+|\\s|$)`).test(rubyOutput.trim())) throw new Error("Target runtime did not execute the requested Ruby version.");
   return {
     node: preparationResult(results[0]),
     bundler: preparationResult(results[1]),
     bundleInstall: preparationResult(results[2]),
     ...(rails ? { databaseCreate: preparationResult(results[3]) } : {}),
-    rubyVersion: preparationResult(results.at(-1))
+    rubyVersion: preparationResult(results[rubyIndex]),
+    bundlerVersion: `${results.at(-1).stdout ?? ""}${results.at(-1).stderr ?? ""}`.trim()
   };
 }
 function railsProject(root) {
@@ -164,7 +173,9 @@ export function prepareTargetRuntime({ root = process.cwd(), reportPath, ruby, d
   const canonical = canonicalRoot(root);
   const db = resolveDatabase(database ?? detectDatabase(canonical));
   const selected = selectedRun(canonical, reportPath);
-  const runtime = { version: 2, runId: selected.run.runId, reportPath: selected.reportPath, ruby, database: db.adapter, ...names(selected.run.runId, db) };
+  const run = readRun(canonical, selected.reportPath);
+  const bundlerToInstall = run.reportType === "bundler_bridge" ? run.targetBundler : (run.bundlerBridge ? run.bundlerBridge.bundlerTo : undefined) || "2.4.22";
+  const runtime = { version: 2, runId: selected.run.runId, reportPath: selected.reportPath, ruby, database: db.adapter, bundlerToInstall, ...names(selected.run.runId, db) };
   const owner = identity(runtime.runId, canonical);
   const existing = readTargetRuntime(canonical);
   if (existing && existing.runId !== runtime.runId) {
@@ -250,5 +261,10 @@ export function validateTargetRuntime({ root = process.cwd(), runtime = readTarg
   const expectedIds = [app?.Id, database?.Id].sort();
   const valid = appMatches(app, canonical, runtime, db) && databaseMatches(database, runtime, db) && hasOwnership(network, owner) && hasOwnership(app, owner) && hasOwnership(database, owner) && connectedIds.length === 2 && connectedIds.every((id, index) => id === expectedIds[index]) && app?.Image === runtime.resolvedImageId && (!runtime.databaseImageId || database?.Image === runtime.databaseImageId) && env.RAILS_ENV === "test" && env.DATABASE_URL === db.databaseUrl(runtime.databaseContainer);
   if (!valid) throw new Error("Target runtime no longer matches its prepared run. Rerun prepare-target-runtime --ruby <x.y.z>.");
-  return { runId: runtime.runId, reportPath: runtime.reportPath, name: runtime.appContainer, id: app.Id, imageId: app.Image, imageRef: app.Config.Image, ruby: runtime.ruby, database: runtime.database, databaseContainer: runtime.databaseContainer, databaseContainerId: database.Id, databaseImageId: database.Image, databaseImageRef: database.Config.Image, network: runtime.network, networkId: network.Id };
+  // bundlerVersion is surfaced so the generated report can warn that the deploy
+  // host and CI may resolve a different Bundler than this container pinned. It
+  // comes from `bundle --version` in the prepared container, not from the
+  // bootstrap log, so it reflects what `bundle exec` actually resolved.
+  const bundlerVersion = /Bundler version (\d+(?:\.\d+)+)/.exec(runtime.preparation?.bundlerVersion ?? "")?.[1] ?? undefined;
+  return { runId: runtime.runId, reportPath: runtime.reportPath, name: runtime.appContainer, id: app.Id, imageId: app.Image, imageRef: app.Config.Image, ruby: runtime.ruby, ...(bundlerVersion ? { bundlerVersion } : {}), database: runtime.database, databaseContainer: runtime.databaseContainer, databaseContainerId: database.Id, databaseImageId: database.Image, databaseImageRef: database.Config.Image, network: runtime.network, networkId: network.Id };
 }

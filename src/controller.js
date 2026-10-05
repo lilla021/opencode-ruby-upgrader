@@ -4,9 +4,11 @@ import { execFileSync } from "node:child_process";
 import { inspectGitCapabilities, inspectWorktree } from "./preflight.js";
 import { inventoryProject } from "./inventory.js";
 import { inspectSupplyChain } from "./supply-chain.js";
+import { bundledWith as inventoryBundledWith } from "./advisory.js";
 import { acquireRunLock, assertRunLock, readRun, releaseRunLock, writeRun } from "./run-state.js";
 import { executeValidation } from "./validation-executor.js";
 import { receiptDigest } from "./provenance.js";
+import { BUNDLER_COMPATIBILITY_SOURCE, bundlerVersion, bundlerSeries, compareBundler, bundlerPinBelowFloor, contiguousBundlerHop, validateBundlerLadder } from "./bundler-compat.js";
 
 const rubyVersion = /^\d+\.\d+(?:\.\d+)?$/;
 const railsVersion = /^\d+(?:\.\d+)+$/;
@@ -74,6 +76,31 @@ export function beginRailsBridgeRun({ root = process.cwd(), rubyReportPath, dryR
   return { ...plan, reportPath, report, lock };
 }
 
+export function beginBundlerBridgeRun({ root = process.cwd(), rubyReportPath, dryRun = false, stopAfterHop = false } = {}) {
+  const rubyRun = readRun(root, rubyReportPath);
+  if (rubyRun.reportType?.endsWith("_bridge") || rubyRun.phase !== "blocked" || rubyRun.status !== "blocked" || !rubyRun.bundlerBridge) throw new Error("A Bundler bridge can start only from a blocked Ruby run with an approved Bundler compatibility bridge.");
+  const preflight = inspectWorktree(root); const inventory = inventoryProject(root); const supplyChain = inspectSupplyChain(root); const gitCapabilities = inspectGitCapabilities(root); const bridge = rubyRun.bundlerBridge;
+  const plan = { preflight, inventory, supplyChain, gitCapabilities, bridge, dryRun, stopAfterHop };
+  if (dryRun) return plan;
+  if (!preflight.ok || preflight.mode !== "linked-worktree") throw new Error("A durable Bundler bridge requires a supported linked Git worktree.");
+  if (bundlerSeries(inventory.bundler?.bundledWith ?? "") !== bundlerSeries(bridge.bundlerFrom)) throw new Error("The current Gemfile.lock must still record the Bundler version recorded by the blocked Ruby run.");
+  if (preflight.branch !== rubyRun.branch || preflight.sha !== rubyRun.expectedHead) throw new Error("Bundler bridge must start on the blocked Ruby run's recorded branch and checkpoint SHA.");
+  const reportPath = path.join(".ruby-upgrades", "runs", runName());
+  const report = { schemaVersion: 2, validationReceiptsRequired: true, reportType: "bundler_bridge", runId: crypto.randomUUID(), title: `Bundler bridge ${bridge.bundlerFrom} to ${bridge.bundlerTo}`, status: "in_progress", phase: "initialized", startedAt: new Date().toISOString(), targetBundler: bridge.bundlerTo, targetBundlerPinnedAt: new Date().toISOString(), targetRuby: bridge.rubyTo, branch: preflight.branch ?? null, worktreeRoot: preflight.root ?? root, startingSha: preflight.sha ?? null, expectedHead: preflight.sha ?? null, control: { stopAfterHop }, inventory, supplyChain, gitCapabilities, bridge: { rubyReportPath, rubyRunId: rubyRun.runId, rubyFrom: bridge.rubyFrom, rubyTo: bridge.rubyTo, bundlerFrom: bridge.bundlerFrom, bundlerTo: bridge.bundlerTo, minimumBundler: bridge.minimumBundler, compatibilitySource: bridge.compatibilitySource, approvedAt: bridge.recordedAt }, research: { ladder: [], citations: [] }, riskDecisions: [], requiredRisks: requiredRisksFor(supplyChain, gitCapabilities), summary: [`Bundler bridge initialized from a blocked Ruby hop; researched floor ${bridge.minimumBundler}.`], iterations: [], sessionSummary: "" };
+  const lock = acquireRunLock(root, reportPath); report.lockNonce = lock.nonce;
+  try { writeRun(root, reportPath, report); } catch (error) { releaseRunLock(root, reportPath, lock.nonce); throw error; }
+  return { ...plan, reportPath, report, lock };
+}
+
+export function recordBundlerResearch({ root = process.cwd(), reportPath, ladder, citations }) {
+  const run = readRun(root, reportPath); assertRunLock(root, reportPath, run.lockNonce);
+  if (run.reportType !== "bundler_bridge") throw new Error("Bundler research belongs only to a Bundler bridge report.");
+  const problem = validateBundlerLadder({ ladder, pinned: run.bridge.bundlerFrom, target: run.targetBundler });
+  if (problem) throw new Error(problem);
+  if (!Array.isArray(citations) || !citations.length || citations.some((citation) => !citation?.title || !/^https:\/\//.test(citation.url ?? ""))) throw new Error("Bundler research requires at least one HTTPS official-source citation.");
+  run.research = { ladder, citations }; writeRun(root, reportPath, run); return run;
+}
+
 export function recordResearch({ root = process.cwd(), reportPath, ladder, citations }) {
   const run = readRun(root, reportPath); assertRunLock(root, reportPath, run.lockNonce);
   if (!Array.isArray(ladder) || !ladder.length || ladder.some((version) => !rubyVersion.test(version))) throw new Error("Research requires a Ruby-version ladder.");
@@ -98,6 +125,31 @@ export function recordRiskDecision({ root = process.cwd(), reportPath, risk, dec
   const run = readRun(root, reportPath); assertRunLock(root, reportPath, run.lockNonce); run.riskDecisions.push({ risk, decision, evidence, recordedAt: new Date().toISOString() }); writeRun(root, reportPath, run); return run;
 }
 
+// A Bundler bridge records the same kind of decision the Rails bridge does: the
+// project's own pin cannot cross the researched Ruby hop, so the change happens
+// in its own separately scoped run. What differs is the evidence -- a Rails hop
+// produces a reviewable `app:update` receipt, while a Bundler hop produces a
+// lockfile change that must be confirmed against the version actually executed.
+export function recordBundlerBridge({ root = process.cwd(), reportPath, rubyFrom, rubyTo, bundlerFrom, bundlerTo, minimumBundler, rationale, citations }) {
+  const run = readRun(root, reportPath); assertRunLock(root, reportPath, run.lockNonce);
+  if (!["research_complete", "committed"].includes(run.phase)) throw new Error("Record a Bundler compatibility bridge only after research or a committed Ruby checkpoint and before a blocked Ruby hop.");
+  if (run.frameworkBridge || run.bundlerBridge) throw new Error("This run already has an approved compatibility bridge; complete it in a separately scoped run.");
+  if (![rubyFrom, rubyTo].every((version) => rubyVersion.test(version)) || ![bundlerFrom, bundlerTo, minimumBundler].every((version) => bundlerVersion.test(version))) throw new Error("A Bundler compatibility bridge requires Ruby from/to and Bundler from/to/floor versions.");
+  if (series(rubyFrom) !== series(run.iterations.at(-1)?.to ?? run.research.ladder[0]) || series(rubyTo) !== series(run.research.ladder[run.research.ladder.findIndex((version) => series(version) === series(rubyFrom)) + 1])) throw new Error("Bundler compatibility bridge must describe the next researched Ruby hop.");
+  if (series(bundlerFrom) !== series(run.inventory.bundler?.bundledWith ?? "")) throw new Error("A Bundler compatibility bridge must begin at the version recorded in the project's BUNDLED WITH.");
+  // Without this the bridge could be approved for a pin that already satisfies
+  // the floor, which would block a hop for no reason. It is deliberately the
+  // last check before approval, so the message names the actual pin and floor
+  // rather than a generic validation failure.
+  const pin = run.inventory.bundler?.bundledWith ?? bundlerFrom;
+  if (!bundlerPinBelowFloor({ pinned: pin, minimum: minimumBundler })) throw new Error(`Bundler ${pin} is not below the researched floor ${minimumBundler}; approving a bridge would block the hop without cause.`);
+  if (compareBundler(bundlerTo, minimumBundler) < 0) throw new Error("The bridge target Bundler must be at or above the researched minimum floor.");
+  if (!rationale || !Array.isArray(citations) || !citations.length || citations.some((citation) => !citation?.title || !/^https:\/\//.test(citation.url ?? ""))) throw new Error("A Bundler compatibility bridge requires a rationale and HTTPS citations.");
+  run.bundlerBridge = { status: "approved", rubyFrom, rubyTo, bundlerFrom, bundlerTo, minimumBundler, compatibilitySource: BUNDLER_COMPATIBILITY_SOURCE, rationale, citations, recordedAt: new Date().toISOString() };
+  run.summary = [...run.summary, `User approved a separately scoped Bundler ${bundlerFrom} → ${bundlerTo} bridge before Ruby ${rubyFrom} → ${rubyTo}, on a researched floor of ${minimumBundler}.`];
+  writeRun(root, reportPath, run); return run;
+}
+
 export function recordFrameworkBridge({ root = process.cwd(), reportPath, rubyFrom, rubyTo, railsFrom, railsTo, rationale, citations }) {
   const run = readRun(root, reportPath); assertRunLock(root, reportPath, run.lockNonce);
   if (!["research_complete", "committed"].includes(run.phase)) throw new Error("Record a Rails compatibility bridge only after research or a committed Ruby checkpoint and before a blocked Ruby hop.");
@@ -114,7 +166,7 @@ export function recordFrameworkBridge({ root = process.cwd(), reportPath, rubyFr
 
 function recordIterationInternal({ root = process.cwd(), reportPath, iteration, executed = false }) {
   const run = readRun(root, reportPath); assertRunLock(root, reportPath, run.lockNonce);
-  if (run.reportType === "rails_bridge") throw new Error("Use record-rails-iteration for a Rails bridge report.");
+  if (run.reportType?.endsWith("_bridge")) throw new Error(`Use the ${run.reportType === "rails_bridge" ? "Rails" : "Bundler"} bridge iteration recorder for a bridge report.`);
   if (run.validationReceiptsRequired && !executed) throw new Error("New reports require record-executed-iteration so validation receipts are created by the executor.");
   if (run.phase !== "research_complete" && run.phase !== "committed") throw new Error("Record iterations only after research or a prior checkpoint.");
   assertApprovedRisks(run);
@@ -190,6 +242,27 @@ export function discardLastRailsIteration({ root = process.cwd(), reportPath, re
   writeRun(root, reportPath, run); return run;
 }
 
+// A Bundler hop is evidenced by what it changed and what actually ran. `bundle
+// lock --bundler` rewrites the `BUNDLED WITH` pin, and the runtime attests the
+// Bundler that executed the tests; requiring both to agree is what stops a hop
+// being recorded on the strength of a lockfile edit alone.
+export function recordExecutedBundlerIteration({ root = process.cwd(), reportPath, iteration, validationCommandId, executed = false }) {
+  const run = readRun(root, reportPath); assertRunLock(root, reportPath, run.lockNonce);
+  if (run.reportType !== "bundler_bridge" || !["research_complete", "committed"].includes(run.phase)) throw new Error("Record Bundler iterations only after Bundler research or a prior Bundler checkpoint.");
+  assertApprovedRisks(run);
+  if (run.iterations.length && (run.phase !== "committed" || !run.iterations.at(-1).checkpointSha)) throw new Error("Each iteration requires exactly one checkpoint before the next iteration.");
+  const expectedFrom = run.iterations.at(-1)?.to ?? run.research.ladder[0];
+  const index = run.research.ladder.findIndex((version) => bundlerSeries(version) === bundlerSeries(expectedFrom));
+  const expectedTo = run.research.ladder[index + 1];
+  if (!iteration || index < 0 || !expectedTo || bundlerSeries(iteration.from) !== bundlerSeries(expectedFrom) || bundlerSeries(iteration.to) !== bundlerSeries(expectedTo)) throw new Error("Iteration must advance exactly one researched Bundler series from the prior ladder point.");
+  const receipt = executeValidation({ root, inventory: run.inventory, commandId: validationCommandId, expectedRuntime: { runId: run.runId, reportPath } });
+  if (receipt.kind !== "test" || receipt.exitCode !== 0 || receipt.testEvidence?.passed !== true) throw new Error(`Validation failed; receipt ${receipt.id} was not recorded as a passing hop.`);
+  const pinned = inventoryBundledWith(root);
+  if (bundlerSeries(pinned ?? "") !== bundlerSeries(iteration.to)) throw new Error(`Gemfile.lock still records Bundler ${pinned ?? "none"}; a hop to ${iteration.to} requires the BUNDLED WITH pin to be rewritten first.`);
+  if (bundlerSeries(receipt.environment?.bundlerVersion ?? "") !== bundlerSeries(iteration.to)) throw new Error(`Validation executed Bundler ${receipt.environment?.bundlerVersion ?? "an unrecorded version"}, not ${iteration.to}. Re-prepare the target runtime on the new Bundler before recording this hop.`);
+  run.iterations.push({ ...iteration, status: "complete", lockfilePin: pinned }); writeRun(root, reportPath, run); return run;
+}
+
 export function recordDependencyReview({ root = process.cwd(), reportPath, compatibility, licenses }) {
   if (!compatibility?.trim() || !licenses?.trim()) throw new Error("Dependency review requires compatibility and license findings.");
   const run = readRun(root, reportPath); assertRunLock(root, reportPath, run.lockNonce);
@@ -205,7 +278,8 @@ function validRailsReviewForExecution(review, receipt) { return review?.command 
 function validationPreflight(root, reportPath, rails) {
   const run = readRun(root, reportPath);
   assertRunLock(root, reportPath, run.lockNonce);
-  if (Boolean(run.reportType === "rails_bridge") !== rails || !["research_complete", "committed"].includes(run.phase)) throw new Error("Validation can run only for the active report type after research or a prior checkpoint.");
+  const activeType = run.reportType === "rails_bridge" ? "rails_bridge" : run.reportType === "bundler_bridge" ? "bundler_bridge" : "ruby";
+  if ((rails ? "rails_bridge" : "ruby") !== activeType || !["research_complete", "committed"].includes(run.phase)) throw new Error("Validation can run only for the active report type after research or a prior checkpoint.");
   assertApprovedRisks(run);
   if (run.iterations.length && (run.phase !== "committed" || !run.iterations.at(-1).checkpointSha)) throw new Error("Each iteration requires exactly one checkpoint before validation can run again.");
   return run;
@@ -213,7 +287,7 @@ function validationPreflight(root, reportPath, rails) {
 
 function assertCompletion(run) {
   const final = run.iterations.at(-1);
-  const target = run.reportType === "rails_bridge" ? run.targetRails : run.targetRuby;
+  const target = run.reportType === "rails_bridge" ? run.targetRails : run.reportType === "bundler_bridge" ? run.targetBundler : run.targetRuby;
   if (!final || series(final.to) !== series(target)) throw new Error("A run can complete only after the final validated iteration reaches its pinned target.");
   if (series(run.research.ladder.at(-1)) !== series(target)) throw new Error("Research ladder does not reach its pinned target.");
   if (hasUnapprovedRisks(run)) throw new Error("Unresolved risks prevent completion.");
@@ -228,14 +302,14 @@ function verifyCheckpoint(root, reportPath, run, commitSha) {
   if (git(root, ["rev-parse", `${head}^`]) !== run.expectedHead) throw new Error("Checkpoint must be a direct child of the prior recorded checkpoint.");
   const iteration = run.iterations.at(-1);
   const message = git(root, ["log", "-1", "--format=%B"]);
-  const prefix = run.reportType === "rails_bridge" ? "Rails" : "Ruby";
-  if (!message.includes(`${prefix}-Upgrade-Report: ${reportPath}`) || !message.includes(`${prefix}-Upgrade-Hop: ${iteration.from}->${iteration.to}`) || (iteration.validationReceipts?.length && !message.includes(`Validation-Receipt-Digest: sha256:${receiptDigest(iteration.validationReceipts)}`)) || (prefix === "Rails" && (!message.includes(`Rails-App-Update-Reviewed: ${iteration.from}->${iteration.to}`) || !message.includes(`Rails-Bridge-Ruby-Report: ${run.bridge.rubyReportPath}`)))) throw new Error("Checkpoint commit does not carry the required run and hop trailers.");
+  const prefix = run.reportType === "rails_bridge" ? "Rails" : run.reportType === "bundler_bridge" ? "Bundler" : "Ruby";
+  if (!message.includes(`${prefix}-Upgrade-Report: ${reportPath}`) || !message.includes(`${prefix}-Upgrade-Hop: ${iteration.from}->${iteration.to}`) || (iteration.validationReceipts?.length && !message.includes(`Validation-Receipt-Digest: sha256:${receiptDigest(iteration.validationReceipts)}`)) || (prefix === "Rails" && (!message.includes(`Rails-App-Update-Reviewed: ${iteration.from}->${iteration.to}`) || !message.includes(`Rails-Bridge-Ruby-Report: ${run.bridge.rubyReportPath}`))) || (prefix === "Bundler" && !message.includes(`Bundler-Bridge-Ruby-Report: ${run.bridge.rubyReportPath}`))) throw new Error("Checkpoint commit does not carry the required run and hop trailers.");
 }
 
 export function transitionRun({ root = process.cwd(), reportPath, phase, note = "", commitSha = "" }) {
   if (!Object.hasOwn(transitions, phase)) throw new Error(`Unknown run phase: ${phase}.`);
   const run = readRun(root, reportPath); assertRunLock(root, reportPath, run.lockNonce); const current = run.phase;
-  if (current === "blocked" && run.frameworkBridge) throw new Error("A Ruby run blocked by a Rails bridge is terminal; complete the bridge and start a fresh Ruby run.");
+  if (current === "blocked" && (run.frameworkBridge || run.bundlerBridge)) throw new Error("A Ruby run blocked by an approved compatibility bridge is terminal; complete that bridge and start a fresh Ruby run.");
   if (!transitions[current]?.includes(phase)) throw new Error(`Cannot transition from ${current} to ${phase}.`);
   if (phase === "research_complete" && (!run.research.ladder.length || !run.research.citations.length)) throw new Error("Record research and citations before completing research.");
   if (phase === "hop_validated" && (run.iterations.at(-1)?.tests?.passed !== true || !run.iterations.at(-1)?.validationReceipts?.length)) throw new Error("A hop requires passing tests and executed validation receipts.");
@@ -258,7 +332,7 @@ export function transitionRun({ root = process.cwd(), reportPath, phase, note = 
 export function resumeRun({ root = process.cwd(), reportPath, continueAfterHop = false }) {
   const run = readRun(root, reportPath);
   if (run.status === "complete") throw new Error("This run is complete; start a new run instead.");
-  if (run.frameworkBridge && run.phase === "blocked") throw new Error("This Ruby run is blocked by an approved Rails bridge and cannot resume. Complete the linked Rails bridge, then begin a fresh Ruby run.");
+  if ((run.frameworkBridge || run.bundlerBridge) && run.phase === "blocked") throw new Error("This Ruby run is blocked by an approved compatibility bridge and cannot resume. Complete the linked bridge, then begin a fresh Ruby run.");
   if (run.phase === "paused" && !transitions.paused.includes(run.resumePhase)) throw new Error("Paused run has no safe resume phase.");
   if (run.control.stopAfterHop && run.iterations.length >= 1 && run.resumePhase === "committed" && !continueAfterHop) throw new Error("This run stopped after its requested hop. Resume with explicit --continue-after-hop only after user review.");
   if (continueAfterHop) run.control.stopAfterHop = false;

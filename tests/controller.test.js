@@ -3,11 +3,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { beginRailsBridgeRun, beginRun, discardLastRailsIteration, recordDependencyReview, recordExecutedIteration, recordFrameworkBridge, recordIteration, recordRiskDecision, recordRailsIteration, recordRailsResearch, recordResearch, resumeRun, transitionRun } from "../src/controller.js";
+import { beginBundlerBridgeRun, beginRailsBridgeRun, beginRun, discardLastRailsIteration, recordBundlerBridge, recordBundlerResearch, recordDependencyReview, recordExecutedIteration, recordExecutedBundlerIteration, recordFrameworkBridge, recordIteration, recordRiskDecision, recordRailsIteration, recordRailsResearch, recordResearch, resumeRun, transitionRun } from "../src/controller.js";
 import { inventoryProject } from "../src/inventory.js";
 import { inspectSupplyChain } from "../src/supply-chain.js";
 import { parseTestEvidence } from "../src/test-evidence.js";
-import { writeRun } from "../src/run-state.js";
+import { readRun, validateRun, writeRun } from "../src/run-state.js";
 import { createLinkedWorktree } from "./helpers/git-worktree.js";
 
 const testReceipt = () => ({ receiptVersion: 1, id: "11111111-1111-4111-8111-111111111111", kind: "test", commandId: "bundle-rake-test", argv: ["bundle", "exec", "rake", "test"], startedAt: "2026-01-01T00:00:00Z", finishedAt: "2026-01-01T00:00:01Z", durationMs: 1000, exitCode: 0, timedOut: false, output: { redactedSha256: "a".repeat(64), summary: "1 runs, 0 failures" }, testEvidence: { passed: true } });
@@ -228,4 +228,133 @@ test("a latest approved decision supersedes a blocked risk at completion", (t) =
   assert.throws(() => transitionRun({ root, reportPath: started.reportPath, phase: "complete" }), /Unresolved risks/);
   recordRiskDecision({ root, reportPath: started.reportPath, risk: "runtime-support", decision: "approved", evidence: "Dependency replaced." });
   assert.equal(transitionRun({ root, reportPath: started.reportPath, phase: "complete" }).status, "complete");
+});
+
+// The Bundler bridge is the mirror image of the Rails bridge. A Rails hop is
+// blocked because the framework lags the Ruby; a Bundler hop is blocked because
+// the project's own `BUNDLED WITH` pin lags the Ruby it must now run on.
+const bundlerProject = (pin) => ({
+  Gemfile: 'source "https://rubygems.org"\n',
+  "Gemfile.lock": `GEM\n  specs:\n\nPLATFORMS\n  ruby\n\nBUNDLED WITH\n   ${pin}\n`
+});
+const bundlerCitation = [{ title: "Bundler compatibility with Ruby", url: "https://guides.rubygems.org/bundler-compatibility/" }];
+
+const blockedRubyRunOnStaleBundler = (root, pin = "2.4.17") => {
+  const ruby = beginRun({ root, target: "3.4" });
+  transitionRun({ root, reportPath: ruby.reportPath, phase: "inventory_complete" });
+  recordResearch({ root, reportPath: ruby.reportPath, ladder: ["3.3", "3.4"], citations: [{ title: "Ruby", url: "https://www.ruby-lang.org/" }] });
+  transitionRun({ root, reportPath: ruby.reportPath, phase: "research_complete" });
+  return ruby;
+};
+
+test("approves a Bundler bridge only when the pin is genuinely below a cited floor", (t) => {
+  const { linked: root } = createLinkedWorktree(t, { prefix: "bundler-bridge-floor-", files: bundlerProject("2.4.17"), directories: ["test"] });
+  const ruby = blockedRubyRunOnStaleBundler(root);
+  const approve = (patch) => recordBundlerBridge({
+    root, reportPath: ruby.reportPath, rubyFrom: "3.3", rubyTo: "3.4", bundlerFrom: "2.4.17", bundlerTo: "2.5.22", minimumBundler: "2.5",
+    rationale: "Bundler 2.4 predates Ruby 3.4 support.", citations: bundlerCitation, ...patch
+  });
+  // Rejection paths are checked first, while the run still has no bridge.
+  // Blocking a hop that the pin already satisfies would be wrong as often as right.
+  // The project records 2.4.17, so a claimed 2.7 pin contradicts the lockfile.
+  assert.throws(() => approve({ bundlerFrom: "2.7", minimumBundler: "2.5" }), /must begin at the version recorded/);
+  // A floor the recorded pin already clears must not be able to block a hop.
+  assert.throws(() => approve({ minimumBundler: "2.4" }), /Bundler 2\.4\.17 is not below the researched floor 2\.4/);
+  // A target under the floor leaves the project still broken.
+  assert.throws(() => approve({ bundlerTo: "2.4.22" }), /at or above the researched minimum/);
+  assert.throws(() => approve({ citations: [] }), /rationale and HTTPS citations/);
+  assert.throws(() => approve({ rubyTo: "3.5" }), /next researched Ruby hop/);
+  // The real-world case: a 2.4 pin cannot run a 3.4 project.
+  const approved = approve({});
+  assert.equal(approved.bundlerBridge.status, "approved");
+  assert.equal(approved.bundlerBridge.minimumBundler, "2.5");
+  assert.equal(approved.bundlerBridge.compatibilitySource, "https://guides.rubygems.org/bundler-compatibility/");
+  // One approved bridge per run: the prerequisite is done once, in its own scope.
+  assert.throws(() => approve({}), /already has an approved compatibility bridge/);
+});
+
+test("runs a Bundler bridge as its own scoped report linked to the blocked Ruby run", (t) => {
+  const { linked: root } = createLinkedWorktree(t, { prefix: "bundler-bridge-lifecycle-", files: bundlerProject("2.4.17"), directories: ["test"] });
+  const ruby = blockedRubyRunOnStaleBundler(root);
+  recordBundlerBridge({ root, reportPath: ruby.reportPath, rubyFrom: "3.3", rubyTo: "3.4", bundlerFrom: "2.4.17", bundlerTo: "2.5.22", minimumBundler: "2.5", rationale: "Bundler 2.4 predates Ruby 3.4.", citations: bundlerCitation });
+  transitionRun({ root, reportPath: ruby.reportPath, phase: "blocked" });
+  const bridge = beginBundlerBridgeRun({ root, rubyReportPath: ruby.reportPath });
+  assert.equal(bridge.report.reportType, "bundler_bridge");
+  assert.equal(bridge.report.targetBundler, "2.5.22");
+  assert.equal(bridge.report.bridge.rubyRunId, ruby.report.runId);
+  // The link back is what makes this separately scoped rather than a second phase.
+  assert.equal(bridge.report.bridge.minimumBundler, "2.5");
+
+  transitionRun({ root, reportPath: bridge.reportPath, phase: "inventory_complete" });
+  // The ladder must walk one series at a time and can cross the 2.7 -> 4.0 boundary.
+  // Skipping to the target crosses two intermediate series at once.
+  assert.throws(() => recordBundlerResearch({ root, reportPath: bridge.reportPath, ladder: ["2.4.17", "2.5.22", "2.7.2"], citations: bundlerCitation }), /one minor series per hop/);
+  assert.throws(() => recordBundlerResearch({ root, reportPath: bridge.reportPath, ladder: ["2.5.22", "2.6.9"], citations: bundlerCitation }), /begin at the version recorded/);
+  assert.throws(() => recordBundlerResearch({ root, reportPath: bridge.reportPath, ladder: ["2.4.17", "2.5.22", "2.6.9"], citations: bundlerCitation }), /end at the researched target/);
+  assert.throws(() => recordBundlerResearch({ root, reportPath: bridge.reportPath, ladder: ["2.4.17", "2.5.22"], citations: [] }), /HTTPS official-source citation/);
+  recordBundlerResearch({ root, reportPath: bridge.reportPath, ladder: ["2.4.17", "2.5.22"], citations: bundlerCitation });
+  transitionRun({ root, reportPath: bridge.reportPath, phase: "research_complete" });
+  assert.equal(validateRun(readRun(root, bridge.reportPath)).valid, true);
+});
+
+test("a Bundler bridge crosses the 2.7 to 4.0 series boundary", (t) => {
+  const { linked: root } = createLinkedWorktree(t, { prefix: "bundler-bridge-boundary-", files: bundlerProject("2.4.17"), directories: ["test"] });
+  const ruby = blockedRubyRunOnStaleBundler(root);
+  recordBundlerBridge({ root, reportPath: ruby.reportPath, rubyFrom: "3.3", rubyTo: "3.4", bundlerFrom: "2.4.17", bundlerTo: "4.0.11", minimumBundler: "2.5", rationale: "Move to the current Bundler series.", citations: bundlerCitation });
+  transitionRun({ root, reportPath: ruby.reportPath, phase: "blocked" });
+  const bridge = beginBundlerBridgeRun({ root, rubyReportPath: ruby.reportPath });
+  transitionRun({ root, reportPath: bridge.reportPath, phase: "inventory_complete" });
+  // 4.0 skips major 3 entirely, so a +1-only rule could never reach it.
+  recordBundlerResearch({ root, reportPath: bridge.reportPath, ladder: ["2.4.17", "2.5.22", "2.6.9", "2.7.2", "4.0.11"], citations: bundlerCitation });
+  transitionRun({ root, reportPath: bridge.reportPath, phase: "research_complete" });
+  assert.equal(bridge.report.targetBundler, "4.0.11");
+});
+
+test("records a Bundler hop only when the lockfile pin and the executed runtime agree", (t) => {
+  const { linked: root } = createLinkedWorktree(t, { prefix: "bundler-hop-evidence-", files: bundlerProject("2.4.17"), directories: ["test"] });
+  const ruby = blockedRubyRunOnStaleBundler(root);
+  recordBundlerBridge({ root, reportPath: ruby.reportPath, rubyFrom: "3.3", rubyTo: "3.4", bundlerFrom: "2.4.17", bundlerTo: "2.5.22", minimumBundler: "2.5", rationale: "Bundler 2.4 predates Ruby 3.4.", citations: bundlerCitation });
+  transitionRun({ root, reportPath: ruby.reportPath, phase: "blocked" });
+  const bridge = beginBundlerBridgeRun({ root, rubyReportPath: ruby.reportPath });
+  transitionRun({ root, reportPath: bridge.reportPath, phase: "inventory_complete" });
+  recordBundlerResearch({ root, reportPath: bridge.reportPath, ladder: ["2.4.17", "2.5.22"], citations: bundlerCitation });
+  transitionRun({ root, reportPath: bridge.reportPath, phase: "research_complete" });
+
+  const hop = { from: "2.4.17", to: "2.5.22", files: ["Gemfile.lock"], fixes: [{ files: ["Gemfile.lock"], explanation: "Raise BUNDLED WITH." }], citations: bundlerCitation, tests: { passed: true, command: "bundle exec rake test", smoke: "Boot passed." } };
+  // The adapter check runs before the executor, so a bare minitest project never
+  // reaches the runtime path on a command it cannot support.
+  assert.throws(() => recordExecutedBundlerIteration({ root, reportPath: bridge.reportPath, iteration: hop, validationCommandId: "docker-bundle-rspec" }), /not supported by this project's detected adapter/);
+  // A failing validation run is never recorded as a passing hop.
+  assert.throws(() => recordExecutedBundlerIteration({ root, reportPath: bridge.reportPath, iteration: hop, validationCommandId: "bundle-rake-test" }), /not recorded as a passing hop/);
+
+  // The pin and the executed Bundler are recorded together, so a later reader can
+  // see the lockfile agreed with the version that ran the tests.
+  const recorded = JSON.parse(fs.readFileSync(path.join(root, bridge.reportPath), "utf8"));
+  // A Docker receipt carries the attested Bundler, which is what proves the
+  // tests actually ran on the new version.
+  const environment = { type: "docker", runId: bridge.report.runId, reportPath: bridge.reportPath, name: "ruby-upgrader-app", id: "a".repeat(64), imageId: `sha256:${"b".repeat(64)}`, imageRef: "ruby:3.4.1", ruby: "3.4.1", bundlerVersion: "2.5.22", database: "postgres", databaseContainer: "ruby-upgrader-pg", databaseContainerId: "c".repeat(64), databaseImageId: `sha256:${"d".repeat(64)}`, databaseImageRef: "postgres:16-alpine", network: "ruby-upgrader-net", networkId: "e".repeat(64) };
+  const dockerReceipt = { receiptVersion: 2, id: "44444444-4444-4444-8444-444444444444", kind: "test", commandId: "docker-bundle-rspec", argv: ["docker", "exec"], environment, startedAt: "2026-01-01T00:00:00Z", finishedAt: "2026-01-01T00:00:01Z", durationMs: 1000, exitCode: 0, timedOut: false, output: { redactedSha256: "e".repeat(64), bytes: 10 }, worktree: { algorithm: "sha256", headSha: "a".repeat(40), diffSha256: "b".repeat(64) }, testEvidence: { passed: true } };
+  recorded.iterations = [{ ...hop, status: "complete", lockfilePin: "2.5.22", validationReceipts: [dockerReceipt] }];
+  writeRun(root, bridge.reportPath, recorded);
+  const validated = readRun(root, bridge.reportPath);
+  assert.equal(validated.iterations[0].lockfilePin, "2.5.22");
+  // A hop whose recorded pin disagrees with its target is not valid evidence.
+  const tampered = JSON.parse(fs.readFileSync(path.join(root, bridge.reportPath), "utf8"));
+  tampered.iterations[0].lockfilePin = "2.4.17";
+  assert.equal(validateRun(tampered).valid, false);
+});
+
+test("a Ruby run blocked by a Bundler bridge is terminal", (t) => {
+  const { linked: root } = createLinkedWorktree(t, { prefix: "bundler-bridge-terminal-", files: bundlerProject("2.4.17"), directories: ["test"] });
+  const ruby = blockedRubyRunOnStaleBundler(root);
+  recordBundlerBridge({ root, reportPath: ruby.reportPath, rubyFrom: "3.3", rubyTo: "3.4", bundlerFrom: "2.4.17", bundlerTo: "2.5.22", minimumBundler: "2.5", rationale: "Bundler 2.4 predates Ruby 3.4.", citations: bundlerCitation });
+  transitionRun({ root, reportPath: ruby.reportPath, phase: "blocked" });
+  // Resuming would skip the prerequisite change and leave the project on a
+  // Bundler that cannot run the target Ruby.
+  assert.throws(() => resumeRun({ root, reportPath: ruby.reportPath }), /blocked by an approved compatibility bridge/);
+  // Blocking releases the lock, so a later transition cannot even be attempted
+  // without resuming -- which is itself the guarantee.
+  assert.throws(() => transitionRun({ root, reportPath: ruby.reportPath, phase: "research_complete" }), /No active run lock/);
+  const blocked = readRun(root, ruby.reportPath);
+  assert.match(blocked.summary.at(-1), /separately scoped Bundler 2\.4\.17 → 2\.5\.22 bridge/);
 });

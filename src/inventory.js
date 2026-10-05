@@ -23,7 +23,11 @@ export function inventoryProject(root = process.cwd()) {
   const deploy = ["Dockerfile", "docker-compose.yml", "Procfile", "app.json", "render.yaml", "fly.toml", "config/deploy.yml"].filter((file) => exists(root, file));
   return {
     root, supported: exists(root, "Gemfile"), framework: rails ? "rails" : "ruby", testFramework: rspec ? "rspec" : minitest ? "minitest" : "unknown",
-    rubyDeclarations, rails: rails ? { declaredVersion: declaredRails, resolvedVersion: resolvedRails } : null, recommendedCommands: commands, ci, deploy,
+    rubyDeclarations, rails: rails ? { declaredVersion: declaredRails, resolvedVersion: resolvedRails } : null,
+    // Bundler switches to the version under `BUNDLED WITH`, so this is the
+    // version that will actually run -- not merely the newest one installed.
+    bundler: { bundledWith: lockfile.match(/^BUNDLED WITH\s*\r?\n\s+(\d+(?:\.\d+)+)/m)?.[1] ?? null },
+    recommendedCommands: commands, ci, deploy,
     requiresDecision: !exists(root, "Gemfile") || commands.length === 0,
     reason: !exists(root, "Gemfile") ? "No Gemfile found." : commands.length === 0 ? "No recognized test adapter found." : undefined
   };

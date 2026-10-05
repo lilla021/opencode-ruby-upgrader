@@ -3,7 +3,7 @@ import { inspectGitCapabilities, inspectWorktree, setupInstructions } from "../s
 import { startDashboard } from "../src/dashboard.js";
 import { commitValidatedHop, commitValidatedRailsHop, CommitGateError } from "../src/commit-hop.js";
 import { acquireRunLock, readRun, releaseRunLock, RunStateError } from "../src/run-state.js";
-import { beginRailsBridgeRun, beginRun, discardLastRailsIteration, discardPendingRailsAppUpdate, recordDependencyReview, recordExecutedIteration, recordExecutedRailsIteration, recordFrameworkBridge, recordRailsResearch, recordResearch, recordRiskDecision, resumeRun, runStatus, transitionRun } from "../src/controller.js";
+import { beginBundlerBridgeRun, beginRailsBridgeRun, beginRun, discardLastRailsIteration, discardPendingRailsAppUpdate, recordBundlerBridge, recordBundlerResearch, recordDependencyReview, recordExecutedBundlerIteration, recordExecutedIteration, recordExecutedRailsIteration, recordFrameworkBridge, recordRailsResearch, recordResearch, recordRiskDecision, resumeRun, runStatus, transitionRun } from "../src/controller.js";
 import { inventoryProject } from "../src/inventory.js";
 import { inspectSupplyChain } from "../src/supply-chain.js";
 import { prepareTargetRuntime } from "../src/target-runtime.js";
@@ -13,7 +13,7 @@ const option = (name) => { const index = args.indexOf(name); return index >= 0 ?
 const options = (name) => args.flatMap((argument, index) => argument === name && args[index + 1] ? [args[index + 1]] : []);
 const reportOption = () => option("--report");
 const citation = (value) => { const [title, url] = (value ?? "").split("|"); return { title, url }; };
-const usage = "Usage: opencode-ruby-upgrader <preflight|dashboard|begin|begin-rails-bridge|prepare-target-runtime|status|transition|record-research|record-rails-research|record-risk|record-framework-bridge|record-executed-iteration|record-executed-rails-iteration|discard-pending-app-update|discard-last-rails-iteration|record-dependency-review|inventory|supply-chain|git-capabilities|commit-hop|commit-rails-hop|resume|release-lock> [--help]";
+const usage = "Usage: opencode-ruby-upgrader <preflight|dashboard|begin|begin-rails-bridge|begin-bundler-bridge|prepare-target-runtime|status|transition|record-research|record-rails-research|record-bundler-research|record-risk|record-framework-bridge|record-bundler-bridge|record-executed-iteration|record-executed-rails-iteration|record-executed-bundler-iteration|discard-pending-app-update|discard-last-rails-iteration|record-dependency-review|inventory|supply-chain|git-capabilities|commit-hop|commit-rails-hop|commit-bundler-hop|resume|release-lock> [--help]";
 const prepareRuntimeHelp = `Usage: opencode-ruby-upgrader prepare-target-runtime --ruby <x.y.z> [--database postgres|mysql] [--report .ruby-upgrades/runs/<run>.json]
 
 Prepares an isolated, run-bound Docker runtime. The database is detected from mysql2/PostgreSQL project declarations; absent evidence defaults to PostgreSQL, while conflicting evidence requires --database. Use --database only to override detection deliberately.`;
@@ -38,6 +38,9 @@ if (command === "prepare-target-runtime" && args.includes("--help")) {
 } else if (command === "begin-rails-bridge") {
   try { console.log(JSON.stringify(beginRailsBridgeRun({ rubyReportPath: option("--ruby-report"), dryRun: args.includes("--dry-run"), stopAfterHop: args.includes("--stop-after-hop") }), null, 2)); }
   catch (error) { console.error(`Rails bridge start blocked: ${error.message}`); process.exitCode = 1; }
+} else if (command === "begin-bundler-bridge") {
+  try { console.log(JSON.stringify(beginBundlerBridgeRun({ rubyReportPath: option("--ruby-report"), dryRun: args.includes("--dry-run"), stopAfterHop: args.includes("--stop-after-hop") }), null, 2)); }
+  catch (error) { console.error(`Bundler bridge start blocked: ${error.message}`); process.exitCode = 1; }
 } else if (command === "prepare-target-runtime") {
   try {
     if (!option("--ruby")) throw new Error("Usage: prepare-target-runtime --ruby <x.y.z> [--database postgres|mysql] [--report .ruby-upgrades/runs/<run>.json]");
@@ -62,18 +65,27 @@ if (command === "prepare-target-runtime" && args.includes("--help")) {
 } else if (command === "record-rails-research") {
   try { console.log(JSON.stringify(recordRailsResearch({ reportPath: reportOption(), ladder: (option("--ladder") ?? "").split(",").filter(Boolean), citations: options("--citation").map(citation) }), null, 2)); }
   catch (error) { console.error(`Rails research recording blocked: ${error.message}`); process.exitCode = 1; }
+} else if (command === "record-bundler-research") {
+  try { console.log(JSON.stringify(recordBundlerResearch({ reportPath: reportOption(), ladder: option("--ladder")?.split(","), citations: options("--citation").map(citation) }), null, 2)); }
+  catch (error) { console.error(`Bundler research blocked: ${error.message}`); process.exitCode = 1; }
 } else if (command === "record-risk") {
   try { console.log(JSON.stringify(recordRiskDecision({ reportPath: reportOption(), risk: option("--risk"), decision: option("--decision"), evidence: option("--evidence") }), null, 2)); }
   catch (error) { console.error(`Risk recording blocked: ${error.message}`); process.exitCode = 1; }
 } else if (command === "record-framework-bridge") {
   try { console.log(JSON.stringify(recordFrameworkBridge({ reportPath: reportOption(), rubyFrom: option("--ruby-from"), rubyTo: option("--ruby-to"), railsFrom: option("--rails-from"), railsTo: option("--rails-to"), rationale: option("--rationale"), citations: options("--citation").map(citation) }), null, 2)); }
   catch (error) { console.error(`Rails compatibility bridge blocked: ${error.message}`); process.exitCode = 1; }
+} else if (command === "record-bundler-bridge") {
+  try { console.log(JSON.stringify(recordBundlerBridge({ reportPath: reportOption(), rubyFrom: option("--ruby-from"), rubyTo: option("--ruby-to"), bundlerFrom: option("--bundler-from"), bundlerTo: option("--bundler-to"), minimumBundler: option("--minimum-bundler"), rationale: option("--rationale"), citations: options("--citation").map(citation) }), null, 2)); }
+  catch (error) { console.error(`Bundler compatibility bridge blocked: ${error.message}`); process.exitCode = 1; }
 } else if (command === "record-executed-iteration") {
   try { console.log(JSON.stringify(recordExecutedIteration({ reportPath: reportOption(), iteration: JSON.parse(option("--json") ?? ""), validationCommandId: option("--validation") }), null, 2)); }
   catch (error) { console.error(`Executed validation blocked: ${error.message}`); process.exitCode = 1; }
 } else if (command === "record-executed-rails-iteration") {
   try { console.log(JSON.stringify(recordExecutedRailsIteration({ reportPath: reportOption(), iteration: JSON.parse(option("--json") ?? ""), testValidationCommandId: option("--validation") }), null, 2)); }
   catch (error) { console.error(`Executed Rails validation blocked: ${error.message}`); process.exitCode = 1; }
+} else if (command === "record-executed-bundler-iteration") {
+  try { console.log(JSON.stringify(recordExecutedBundlerIteration({ reportPath: reportOption(), iteration: JSON.parse(option("--iteration") ?? "{}"), validationCommandId: option("--validation-command-id") }), null, 2)); }
+  catch (error) { console.error(`Bundler hop blocked: ${error.message}`); process.exitCode = 1; }
 } else if (command === "discard-pending-app-update") {
   try { console.log(JSON.stringify(discardPendingRailsAppUpdate({ reportPath: reportOption(), reason: option("--reason") }), null, 2)); }
   catch (error) { console.error(`Rails app:update discard blocked: ${error.message}`); process.exitCode = 1; }
@@ -103,6 +115,10 @@ if (command === "prepare-target-runtime" && args.includes("--help")) {
   const reportIndex = args.indexOf("--report");
   try { console.log(JSON.stringify(commitValidatedRailsHop({ reportPath: reportIndex >= 0 ? args[reportIndex + 1] : undefined, allowHooks: args.includes("--allow-hooks"), allowBroadLockfile: args.includes("--allow-broad-lockfile"), allowPrivateSources: args.includes("--allow-private-sources") }), null, 2)); }
   catch (error) { console.error(`${error instanceof CommitGateError ? `Rails commit blocked (${error.code})` : "Rails commit failed"}: ${error.message}`); process.exitCode = 1; }
+} else if (command === "commit-bundler-hop") {
+  const reportIndex = args.indexOf("--report");
+  try { console.log(JSON.stringify(commitValidatedBundlerHop({ reportPath: reportIndex >= 0 ? args[reportIndex + 1] : undefined, allowHooks: args.includes("--allow-hooks"), allowBroadLockfile: args.includes("--allow-broad-lockfile"), allowPrivateSources: args.includes("--allow-private-sources") }), null, 2)); }
+  catch (error) { console.error(`${error instanceof CommitGateError ? `Bundler commit blocked (${error.code})` : "Bundler commit failed"}: ${error.message}`); process.exitCode = 1; }
 } else if (["resume", "release-lock"].includes(command)) {
   const reportIndex = args.indexOf("--report");
   const reportPath = reportIndex >= 0 ? args[reportIndex + 1] : undefined;

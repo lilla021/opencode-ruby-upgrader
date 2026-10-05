@@ -91,7 +91,7 @@ Use `/ruby-upgrade --dry-run` for a no-write inventory and proposed migration as
 The agent has completed a real end-to-end migration against a public fixture: [`ruby2-rails4-bootstrap-heroku`](https://github.com/lilla021/ruby2-rails4-bootstrap-heroku) (BSD-2-Clause) moved from **Ruby 2.4.10 / Rails 4.2.11.3** to **Ruby 3.4.10 / Rails 7.1.6** across 15 receipt-backed hops. Every hop was validated by `bundle exec rspec` in an isolated Docker container, then committed as a local checkpoint before the next hop began.
 
 - [Upgrade pull request](https://github.com/lilla021/ruby2-rails4-bootstrap-heroku/pull/1) — the full migration: 19 commits, one per reviewed step, with lint and spec checks currently passing on GitHub Actions.
-- [Evidence ledger](https://github.com/lilla021/opencode-ruby-upgrader/blob/v0.1.6/E2E_EVIDENCE.md) — every hop's validation receipt, commit SHA, and the fixes the migration required.
+- [Evidence ledger](https://github.com/lilla021/opencode-ruby-upgrader/blob/v0.1.9/E2E_EVIDENCE.md) — every hop's validation receipt, commit SHA, and the fixes the migration required.
 
 This proves the workflow works on a genuinely old, real-world Rails stack. It does not claim every upgrade is safe — see [Safety model](#safety-model) for what the agent refuses to do without you, and [Product limits](#product-limits) for what it cannot prove.
 
@@ -139,11 +139,19 @@ Every run has a generated JSON record and Markdown companion under `.ruby-upgrad
 
 As an example, here is one such run rendered in the dashboard — per-hop summaries, test metrics, and citation links. The full process and per-hop detail live in the run reports themselves:
 
-![Example of the local evidence dashboard](https://raw.githubusercontent.com/lilla021/opencode-ruby-upgrader/v0.1.6/docs/dashboard.png)
+![Example of the local evidence dashboard](https://raw.githubusercontent.com/lilla021/opencode-ruby-upgrader/v0.1.9/docs/dashboard.png)
 
 The same reports open as a vault — each run is a Markdown note paired with its JSON record:
 
-![Example vault view: run reports as paired Markdown and JSON notes](https://raw.githubusercontent.com/lilla021/opencode-ruby-upgrader/v0.1.6/docs/vault.png)
+![Example vault view: run reports as paired Markdown and JSON notes](https://raw.githubusercontent.com/lilla021/opencode-ruby-upgrader/v0.1.9/docs/vault.png)
+
+### Infrastructure review (advisory)
+
+Each report and the dashboard also carry a read-only review of the infrastructure the upgrade may have made inconsistent: Ruby version pins in `.ruby-version`, `.tool-versions`, `.mise.toml`, `Gemfile`, and `Dockerfile`, CI workflows that do not yet test the new target, and the Bundler version recorded in `Gemfile.lock`.
+
+These are advisory and never block a commit. The agent validates your app inside an isolated container; it has no access to your CI config, deploy host, or platform dashboard, so it cannot know what your production runtime actually uses. A version pin that deliberately lags the app is legitimate in many repositories, so every finding states the evidence it was read from and asks you to confirm it. Where a value cannot be read with confidence — an unparseable Dockerfile base image, an unfamiliar CI matrix shape — the tool stays silent rather than guessing.
+
+The dashboard recomputes these on every request from the current worktree instead of storing them in the report. A report describes what happened during that run; these findings describe the repo as it stands now, and a frozen inference would misrepresent the second as the first.
 
 Launch the local-only dashboard from the repository worktree:
 
@@ -151,9 +159,34 @@ Launch the local-only dashboard from the repository worktree:
 npx opencode-ruby-upgrader dashboard
 ```
 
-It binds exclusively to `127.0.0.1` on an ephemeral port and remains in the foreground until you stop it with Ctrl-C. The read-only dashboard displays valid Ruby and Rails-bridge reports plus locally discoverable checkpoint commits; it never changes reports, Git state, or uploads code.
+It binds exclusively to `127.0.0.1` on an ephemeral port and remains in the foreground until you stop it with Ctrl-C. The read-only dashboard displays valid Ruby, Rails-bridge, and Bundler-bridge reports plus locally discoverable checkpoint commits; it never changes reports, Git state, or uploads code.
 
 The dashboard identifies local checkpoint commits from trailers embedded in those commits. Before the final push, inspect them locally with `git log`, `git show`, and the dashboard; after you push, the same individual commits are available for GitHub review.
+
+## When a prerequisite blocks the hop
+
+A Ruby upgrade occasionally cannot cross a version boundary on its own. Two cases are handled, and both work the same way: the Ruby run becomes terminal, and a separately scoped bridge run takes over the prerequisite change.
+
+### Rails bridge
+
+If a resolved Rails version blocks the next Ruby hop, that Ruby run becomes terminal and a separate Rails-bridge run takes over. See the [Rails bridge lifecycle](https://github.com/lilla021/opencode-ruby-upgrader/blob/v0.1.9/docs/rails-bridge.md) reference.
+
+### Bundler bridge
+
+Your `Gemfile.lock` records the Bundler that wrote it under `BUNDLED WITH`, and Bundler switches to that version automatically. So when an upgrade moves Ruby forward, an older pinned Bundler is what breaks — not the other way round. The official compatibility guide is a table of *minimum floors* (Bundler 2.5 requires Ruby >= 3.0, 2.6 requires >= 3.1, 2.7 and 4.0 require >= 3.2), not fixed pairings: Ruby simply ships a matching Bundler as its default.
+
+If your pin sits below the researched floor for the target Ruby, the Ruby run becomes terminal and a separately scoped Bundler bridge takes over, exactly like the Rails bridge. Approving it records the floor, the rationale, and the official citation in the run evidence:
+
+```bash
+npx opencode-ruby-upgrader record-bundler-bridge --report <run>.json \
+  --ruby-from 3.3 --ruby-to 3.4 --bundler-from 2.4.17 --bundler-to 2.5.22 \
+  --minimum-bundler 2.5 --rationale "Bundler 2.4 predates Ruby 3.4 support." \
+  --citation "Bundler compatibility with Ruby|https://guides.rubygems.org/bundler-compatibility/"
+```
+
+A bridge cannot be approved for a pin that already clears the floor, so this cannot block a hop for no reason. The bridge run then researches a contiguous Bundler ladder (`begin-bundler-bridge`, `record-bundler-research`), and a hop is recorded only when the rewritten `BUNDLED WITH` pin **and** the Bundler that actually executed the tests both match the target. Because Bundler 4.0 follows 2.7 directly, the ladder may cross that boundary in a single hop.
+
+Full lifecycle detail: [docs/bundler-bridge.md](https://github.com/lilla021/opencode-ruby-upgrader/blob/v0.1.9/docs/bundler-bridge.md).
 
 ## Recovery
 
@@ -164,8 +197,6 @@ opencode-ruby-upgrader resume --report .ruby-upgrades/runs/<run>.json
 ```
 
 `complete`, `blocked`, and `paused` runs release their lock. For other blockers, inspect the report and use the documented transition/resume path.
-
-If a resolved Rails version blocks the next Ruby hop, that Ruby run becomes terminal and a separate Rails-bridge run takes over. See the [Rails bridge lifecycle](https://github.com/lilla021/opencode-ruby-upgrader/blob/v0.1.6/docs/rails-bridge.md) reference.
 
 To undo a completed hop, use the reviewable local history: `git revert <hop-sha>`. Do not use reset, rebase, or force-push as routine migration recovery.
 
@@ -202,7 +233,7 @@ The credential scanner is heuristic: it recognizes common token formats and quot
 
 No telemetry, no analytics, and no report uploads. Migration evidence is written only under `.ruby-upgrades/` in the current worktree — run reports under `.ruby-upgrades/runs/` and nonsecret runtime metadata in `.ruby-upgrades/runtime.json` — and the dashboard binds to `127.0.0.1` only. Reports may contain target versions, branch names, commit SHAs, changed-file names, dependency source origins, citations, and bounded validation metadata — absolute local paths and recognized credentials are redacted, but redaction is best-effort. Prepared Docker containers, networks, and images stay on your machine and are labelled with the run ID and a one-way hash of the worktree path, never the path itself.
 
-Full detail in [PRIVACY.md](https://github.com/lilla021/opencode-ruby-upgrader/blob/v0.1.6/PRIVACY.md). To report a vulnerability, see [SECURITY.md](https://github.com/lilla021/opencode-ruby-upgrader/blob/v0.1.6/SECURITY.md).
+Full detail in [PRIVACY.md](https://github.com/lilla021/opencode-ruby-upgrader/blob/v0.1.9/PRIVACY.md). To report a vulnerability, see [SECURITY.md](https://github.com/lilla021/opencode-ruby-upgrader/blob/v0.1.9/SECURITY.md).
 
 ## Contributing
 

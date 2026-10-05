@@ -1,5 +1,44 @@
 # opencode-ruby-upgrader — release notes
 
+## v0.1.9 — advisory infrastructure review and the Bundler bridge
+
+Every run already reported that a container-validated upgrade is not a deployed upgrade. v0.1.9 makes that concrete, and then lets you act on one of the findings: when a Ruby upgrade is blocked by a Bundler that cannot run the target, the Ruby run becomes terminal and a separately scoped Bundler bridge takes over, mirroring the existing Rails bridge.
+
+### Infrastructure review (advisory)
+
+- New advisory findings for stale Ruby version pins (`.ruby-version`, `.tool-versions`, `.mise.toml`, `Gemfile`, `Dockerfile`), CI workflows that do not yet test the upgraded target, and the Bundler version recorded in `Gemfile.lock` under `BUNDLED WITH`. Each finding carries the file and value it was read from, a stated basis (`observed` vs `review`), and a remediation that asks rather than instructs.
+- These never gate anything. The agent validates the app inside an isolated container and has no access to your CI config, deploy host, or platform dashboard. A version pin that deliberately lags the app is legitimate in many repositories, so a finding that blocked a commit would be wrong as often as it was right.
+- Silence on ambiguity. An unparseable Dockerfile base image is reported as unread rather than as a version mismatch, and CI inspection only reports Ruby versions visible as plain scalars, because workflow matrix shapes vary too much to parse reliably. Reporting nothing beats guessing.
+- The dashboard recomputes findings per request from the live worktree and stores nothing in the report. A report describes what happened during that run; these describe the repo as it stands now, and persisting an inference as durable evidence would misrepresent the second as the first.
+
+### The Bundler bridge
+
+- `record-bundler-bridge` requires a researched minimum floor, a rationale, and the official citation, and records all three in run evidence. The bridge can only be approved when the recorded pin is genuinely below that floor.
+- `begin-bundler-bridge` and `record-bundler-research` produce a separate report linked back to the blocked Ruby run, with a contiguous Bundler ladder. Bundler 4.0 follows 2.7 directly (there was no 3.x series), so that boundary is a valid single hop; without it a project on 2.4 could never reach 4.0 through a reviewed ladder.
+- `record-executed-bundler-iteration` records a hop only when the rewritten `BUNDLED WITH` pin **and** the Bundler version that actually executed the tests both match the target. This is the honest evidence gate for a bridge whose output is a file change rather than a reviewable generator receipt, and it reuses the runtime Bundler attestation rather than trusting the lockfile alone.
+- `commit-bundler-hop` commits only when the recorded pin agrees with the hop target, and requires `Bundler-Bridge-Ruby-Report` so the linkage survives in Git history.
+
+### Behaviour correction
+
+The premise this was built on was wrong in an instructive way. "Ruby 4 requires Bundler 4" is not a constraint: the official table gives *minimum floors*, and each Ruby release merely ships a matching pair as its default. The compatibility risk runs the other way — an old Bundler pin breaks when Ruby moves forward — so the bridge is the mirror image of the Rails bridge, where the framework lags the Ruby. Both exist because something in the project cannot cross the hop alone.
+
+### No hardcoded compatibility table
+
+`src/bundler-compat.js` deliberately stores no versions. The tool performs no network requests, so it cannot look up which Bundler supports which Ruby, and a baked-in table would silently rot at the next series release. The floor arrives the same way Rails and Ruby facts already do — supplied by the agent as cited research at the moment the bridge is approved — and only the comparison arithmetic lives locally, because that has to be deterministic for an approval to be defensible.
+
+### Scope of change
+
+The Bundler bridge is implemented as a data variation of the existing bridge machinery rather than a third parallel code path. Bridge-specific behaviour is selected by a `bridge` parameter in the commit gate and a bridge-kind prefix in checkpoint trailers, which keeps the `reportType` branches from doubling for every future bridge type.
+
+### Evidence
+
+Unit suite 80/80, covering the floor comparison, the 2.7→4.0 boundary, ladder contiguity, bridge scoping, terminality, and the pin/runtime agreement gate, plus advisory findings against real application shapes: a project pinning 3.3.4 across four files and a workflow on 3.3.4 yields all four findings; after the pins are updated, the stale findings disappear while the Bundler note remains, since that one is a confirmation rather than a detected defect. A repository with no version files produces no findings, and a `FROM my-registry.internal/ruby:latest` base produces no version mismatch. Both real-container smokes pass against real `mysql:8.4` and `postgres:16-alpine`, each asserting a passing RSpec receipt, a secret-free persisted manifest, and clean teardown.
+
+### Known limitations
+
+- A Bundler bridge is never raised automatically. The advisory review points at the pin, but deciding whether it needs a bridge requires the researched floor, which only the agent can supply. That judgment stays explicit by design.
+- CI workflow inspection reads only Ruby versions visible as plain scalars. Unusual matrix shapes are left unreported rather than guessed at.
+
 ## v0.1.8 — real-adapter detection and PostgreSQL container evidence
 
 v0.1.7 shipped database detection that had only ever been tested against hand-written fixtures. Running it against real Rails applications found three wrong answers, one of them silent. This release fixes detection and closes the container-evidence gap for the default adapter.

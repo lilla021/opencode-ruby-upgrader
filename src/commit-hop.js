@@ -34,11 +34,12 @@ function readReport(root, reportPath) {
   catch { throw new CommitGateError("The upgrade report is missing or fails the run schema.", "invalid-report"); }
 }
 
-function assertValidatedIteration(report, rails = false) {
+function assertValidatedIteration(report, bridge = null) {
   const iteration = report.iterations?.at(-1);
-  if (rails ? (!report.targetRails || !report.targetRailsPinnedAt || !report.bridge) : (!report.targetRuby || !report.targetPinnedAt)) {
-    throw new CommitGateError("The report must pin its target and bridge evidence before an automatic commit.", "target-not-pinned");
-  }
+  const pinned = bridge === "rails" ? (report.targetRails && report.targetRailsPinnedAt && report.bridge)
+    : bridge === "bundler" ? (report.targetBundler && report.targetBundlerPinnedAt && report.bridge)
+      : (report.targetRuby && report.targetPinnedAt);
+  if (!pinned) throw new CommitGateError("The report must pin its target and bridge evidence before an automatic commit.", "target-not-pinned");
   if (!iteration || iteration.status !== "complete" || iteration.tests?.passed !== true) {
     throw new CommitGateError("The latest hop is not recorded as complete with passing tests.", "validation-missing");
   }
@@ -52,7 +53,11 @@ function assertValidatedIteration(report, rails = false) {
   if (!Array.isArray(iteration.fixes) || !iteration.fixes.length || !Array.isArray(iteration.citations) || !iteration.citations.length || !iteration.tests?.smoke) {
     throw new CommitGateError("The latest hop requires explained fixes, citations, and smoke-test evidence.", "evidence-missing");
   }
-  if (rails && !iteration.appUpdateReview) throw new CommitGateError("The latest Rails hop requires reviewed bin/rails app:update evidence.", "app-update-review-missing");
+  if (bridge === "rails" && !iteration.appUpdateReview) throw new CommitGateError("The latest Rails hop requires reviewed bin/rails app:update evidence.", "app-update-review-missing");
+  // A Bundler hop changes the lockfile, so the commit must carry the pin it
+  // produced. Committing a hop whose recorded pin disagrees with its target
+  // would publish evidence that does not match the repository state.
+  if (bridge === "bundler" && (!iteration.lockfilePin || iteration.lockfilePin.split(".").slice(0, 2).join(".") !== iteration.to.split(".").slice(0, 2).join("."))) throw new CommitGateError("The latest Bundler hop must record the BUNDLED WITH pin it produced.", "bundler-pin-missing");
   return iteration;
 }
 
@@ -161,9 +166,13 @@ function assertValidationFingerprint(cwd, iteration) {
   }
 }
 
-function messageFor(iteration, reportPath, report, rails = false) {
+function messageFor(iteration, reportPath, report, bridge = null) {
   const receiptTrailer = iteration.validationReceipts?.length ? [`Validation-Receipt-Digest: sha256:${receiptDigest(iteration.validationReceipts)}`] : [];
-  if (rails) return [
+  if (bridge === "bundler") return [
+    `chore(bundler): upgrade ${iteration.from} to ${iteration.to}`, "", "Raise the BUNDLED WITH floor recorded in Gemfile.lock so this project can run on the target Ruby.", `Validation: ${iteration.tests.command || "project test suite"} executed on Bundler ${iteration.lockfilePin}.`, `Evidence: ${reportPath}`,
+    `Bundler-Upgrade-Report: ${reportPath}`, `Bundler-Upgrade-Hop: ${iteration.from}->${iteration.to}`, `Bundler-Bridge-Ruby-Report: ${report.bridge.rubyReportPath}`, ...receiptTrailer
+  ].join("\n");
+  if (bridge === "rails") return [
     `chore(rails): upgrade ${iteration.from} to ${iteration.to}`, "", "Apply the reviewed Rails framework compatibility changes.", `Validation: ${iteration.tests.command || "project test suite"}.`, `Evidence: ${reportPath}`,
     `Rails-Upgrade-Report: ${reportPath}`, `Rails-Upgrade-Hop: ${iteration.from}->${iteration.to}`, `Rails-App-Update-Reviewed: ${iteration.from}->${iteration.to}`, `Rails-Bridge-Ruby-Report: ${report.bridge.rubyReportPath}`, ...receiptTrailer
   ].join("\n");
@@ -178,7 +187,7 @@ function messageFor(iteration, reportPath, report, rails = false) {
   ].join("\n");
 }
 
-function commitValidated({ cwd = process.cwd(), reportPath, allowHooks = false, allowBroadLockfile = false, allowPrivateSources = false, rails = false }) {
+function commitValidated({ cwd = process.cwd(), reportPath, allowHooks = false, allowBroadLockfile = false, allowPrivateSources = false, bridge = null }) {
   if (!reportPath) throw new CommitGateError("Provide --report .ruby-upgrades/runs/<run>.json.", "missing-report-path");
   const state = gitState(cwd);
   if (!state.linked || !state.branch || !state.defaultBranch || state.branch === state.defaultBranch) {
@@ -191,8 +200,9 @@ function commitValidated({ cwd = process.cwd(), reportPath, allowHooks = false, 
   if (!report.lockNonce) throw new CommitGateError("The report is missing its active lock capability.", "lock-capability-missing");
   try { assertRunLock(state.root, reportPath, report.lockNonce); }
   catch (error) { throw new CommitGateError(error.message, error.code); }
-  const iteration = assertValidatedIteration(report, rails);
-  if (report.schemaVersion !== 2 || report.phase !== "hop_validated" || Boolean(report.reportType === "rails_bridge") !== rails) throw new CommitGateError("The run must use the current schema and transition to hop_validated before an automatic commit.", "phase-not-validated");
+  const iteration = assertValidatedIteration(report, bridge);
+  const expectedType = bridge === "rails" ? "rails_bridge" : bridge === "bundler" ? "bundler_bridge" : "ruby";
+  if (report.schemaVersion !== 2 || report.phase !== "hop_validated" || (report.reportType ?? "ruby") !== expectedType) throw new CommitGateError("The run must use the current schema and transition to hop_validated before an automatic commit.", "phase-not-validated");
   if (report.branch !== state.branch) throw new CommitGateError("The worktree branch no longer matches the recorded run branch.", "unexpected-branch");
   assertExpectedHead(state, report);
   const indexPath = path.resolve(cwd, text(cwd, ["rev-parse", "--git-path", "index"]));
@@ -216,7 +226,7 @@ function commitValidated({ cwd = process.cwd(), reportPath, allowHooks = false, 
     throw new CommitGateError(`Potential credential material detected in: ${secretPaths.join(", ")}. Review it manually; it was not committed.`, "secret-detected");
   }
 
-  const message = messageFor(iteration, relativeReport, report, rails);
+  const message = messageFor(iteration, relativeReport, report, bridge);
     assertValidationFingerprint(cwd, iteration);
     if (text(cwd, ["rev-parse", "HEAD"]) !== report.expectedHead) throw new CommitGateError("HEAD changed while the commit gate was validating; refusing to commit atop unexpected history.", "unexpected-head");
     commit(cwd, message, env);
@@ -230,5 +240,6 @@ function commitValidated({ cwd = process.cwd(), reportPath, allowHooks = false, 
   }
 }
 
-export function commitValidatedHop(options = {}) { return commitValidated(options); }
-export function commitValidatedRailsHop(options = {}) { return commitValidated({ ...options, rails: true }); }
+export function commitValidatedHop(options = {}) { return commitValidated({ ...options, bridge: null }); }
+export function commitValidatedRailsHop(options = {}) { return commitValidated({ ...options, bridge: "rails" }); }
+export function commitValidatedBundlerHop(options = {}) { return commitValidated({ ...options, bridge: "bundler" }); }

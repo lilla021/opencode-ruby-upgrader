@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { advisoryFindings } from "./advisory.js";
 
 const SECRET_VALUE = /(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|\bAKIA[0-9A-Z]{16}\b|-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----|\b(?:xox[baprs]-|npm_|glpat-)[A-Za-z0-9_-]{16,})/g;
 const SECRET_KEY = /(?:password|secret|token|api[_-]?key|credential|authorization)/i;
@@ -30,6 +31,8 @@ export function redactSourceUrl(value) {
 
 function validVersion(value) { return typeof value === "string" && /^\d+\.\d+(?:\.(?:\d+|x))?$/.test(value); }
 function validRailsVersion(value) { return typeof value === "string" && /^\d+(?:\.\d+)+$/.test(value); }
+function validBundlerVersion(value) { return typeof value === "string" && /^\d+(?:\.\d+)*$/.test(value); }
+const bundlerSeriesOf = (value) => String(value ?? "").split(".").slice(0, 2).join(".");
 function validCitation(value) { return value && typeof value.title === "string" && /^https:\/\//.test(value.url ?? ""); }
 function safeFiles(files) { return Array.isArray(files) && files.every((file) => typeof file === "string" && !path.isAbsolute(file) && !file.includes("..")); }
 function validAppUpdateReview(review) { return review && review.command === "bin/rails app:update" && typeof review.receiptId === "string" && !Number.isNaN(Date.parse(review.executedAt ?? "")) && !Number.isNaN(Date.parse(review.reviewedAt ?? "")) && validFingerprint(review.worktree) && ["no_changes", "changes_applied", "changes_deferred"].includes(review.outcome) && safeFiles(review.files) && typeof review.summary === "string" && Boolean(review.summary); }
@@ -56,6 +59,31 @@ function receiptErrors(iteration, index, rails, required, errors) {
     const test = receipts?.at(-1);
     const review = iteration?.appUpdateReview;
     if (receipts?.length !== 2 || update?.kind !== "rails_app_update" || update.exitCode !== 0 || test?.kind !== "test" || test.exitCode !== 0 || test.testEvidence?.passed !== true || !review || review.receiptId !== update.id || review.executedAt !== update.startedAt || review.worktree.headSha !== update.worktree.headSha || review.worktree.diffSha256 !== update.worktree.diffSha256 || Date.parse(update.finishedAt) > Date.parse(review.reviewedAt) || Date.parse(review.reviewedAt) > Date.parse(test.startedAt)) errors.push(`Rails iteration ${index + 1} must execute app:update, review its receipt and diff, then run final passing tests.`);
+  }
+}
+
+function validateBundlerBridge(run, errors) {
+  for (const key of ["runId", "title", "startedAt", "targetBundler", "targetBundlerPinnedAt", "phase", "status", "bridge"]) if (!run[key]) errors.push(`Bundler bridge report requires ${key}.`);
+  if (!validBundlerVersion(run.targetBundler)) errors.push("targetBundler must be a Bundler version.");
+  if (typeof run.runId !== "string" || !/^[a-f0-9-]{36}$/i.test(run.runId ?? "")) errors.push("runId must be a UUID.");
+  if (run.startedAt && Number.isNaN(Date.parse(run.startedAt))) errors.push("startedAt must be ISO-8601.");
+  if (!statuses.has(run.status) || !phases.has(run.phase)) errors.push("Bundler bridge has invalid status or phase.");
+  if (run.lockNonce !== undefined && (typeof run.lockNonce !== "string" || !/^[a-f0-9-]{36}$/i.test(run.lockNonce))) errors.push("lockNonce must be a UUID.");
+  if (run.targetBundlerPinnedAt && Number.isNaN(Date.parse(run.targetBundlerPinnedAt))) errors.push("targetBundlerPinnedAt must be ISO-8601.");
+  // The link back to the blocked Ruby run is what makes the bridge separately
+  // scoped rather than a second phase of the same run, so it must be complete.
+  if (!run.bridge || typeof run.bridge !== "object" || typeof run.bridge.rubyReportPath !== "string" || !/^[a-f0-9-]{36}$/i.test(run.bridge.rubyRunId ?? "") || !validVersion(run.bridge.rubyFrom) || !validVersion(run.bridge.rubyTo) || !validBundlerVersion(run.bridge.bundlerFrom) || !validBundlerVersion(run.bridge.bundlerTo) || !validBundlerVersion(run.bridge.minimumBundler)) errors.push("Bundler bridge report has invalid Ruby-run linkage.");
+  if (!Array.isArray(run.research?.ladder) || run.research.ladder.some((version) => !validBundlerVersion(version))) errors.push("Bundler bridge research.ladder must contain Bundler versions.");
+  if (!Array.isArray(run.research?.citations) || run.research.citations.some((citation) => !validCitation(citation))) errors.push("research.citations must contain HTTPS citations.");
+  if (!Array.isArray(run.iterations)) errors.push("iterations must be an array.");
+  for (const [index, iteration] of (run.iterations ?? []).entries()) {
+    if (!validBundlerVersion(iteration?.from) || !validBundlerVersion(iteration?.to) || iteration?.status !== "complete") errors.push(`Bundler iteration ${index + 1} is invalid.`);
+    if (!safeFiles(iteration?.files) || iteration?.tests?.passed !== true || !iteration.tests?.command || !iteration.tests?.smoke || !Array.isArray(iteration?.citations) || !iteration.citations.length || !Array.isArray(iteration?.fixes) || iteration.fixes.some((fix) => !safeFiles(fix.files) || !fix.explanation)) errors.push(`Bundler iteration ${index + 1} lacks required evidence.`);
+    // The pin the hop actually produced, so a later reader can see the lockfile
+    // agreed with the validated version instead of taking it on trust.
+    if (!validBundlerVersion(iteration?.lockfilePin) || bundlerSeriesOf(iteration.lockfilePin) !== bundlerSeriesOf(iteration.to)) errors.push(`Bundler iteration ${index + 1} must record the BUNDLED WITH pin it produced.`);
+    if (iteration?.checkpointSha !== undefined && !/^[a-f0-9]{40}$/i.test(iteration.checkpointSha)) errors.push(`Bundler iteration ${index + 1} checkpointSha must be a Git SHA.`);
+    receiptErrors(iteration, index, false, run.validationReceiptsRequired === true, errors);
   }
 }
 
@@ -88,6 +116,7 @@ export function validateRun(run) {
   if (run.schemaVersion !== 2) errors.push("Report schemaVersion must be 2.");
   if (run.validationReceiptsRequired !== undefined && run.validationReceiptsRequired !== true) errors.push("validationReceiptsRequired must be true when present.");
   if (run.reportType === "rails_bridge") { validateRailsBridge(run, errors); return { valid: errors.length === 0, errors }; }
+  if (run.reportType === "bundler_bridge") { validateBundlerBridge(run, errors); return { valid: errors.length === 0, errors }; }
   if (run.reportType !== undefined && run.reportType !== "ruby") errors.push("Unknown reportType.");
   for (const key of ["runId", "title", "startedAt", "targetRuby", "targetPinnedAt", "phase", "status"]) if (!run[key]) errors.push(`Report requires ${key}.`);
   if (run.lockNonce !== undefined && (typeof run.lockNonce !== "string" || !/^[a-f0-9-]{36}$/i.test(run.lockNonce))) errors.push("lockNonce must be a UUID.");
@@ -108,6 +137,16 @@ export function validateRun(run) {
     if (!validVersion(bridge?.rubyFrom) || !validVersion(bridge?.rubyTo) || !validRailsVersion(bridge?.railsFrom) || !validRailsVersion(bridge?.railsTo)) errors.push("frameworkBridge requires Ruby and Rails from/to versions.");
     if (typeof bridge?.rationale !== "string" || !bridge.rationale) errors.push("frameworkBridge requires a rationale.");
     if (!Array.isArray(bridge?.citations) || !bridge.citations.length || bridge.citations.some((citation) => !validCitation(citation))) errors.push("frameworkBridge requires HTTPS citations.");
+  }
+  if (run.bundlerBridge !== undefined && run.bundlerBridge !== null) {
+    const bridge = run.bundlerBridge;
+    if (!bridge || typeof bridge !== "object" || bridge.status !== "approved") errors.push("bundlerBridge must be an approved compatibility decision.");
+    if (!validVersion(bridge?.rubyFrom) || !validVersion(bridge?.rubyTo) || !validBundlerVersion(bridge?.bundlerFrom) || !validBundlerVersion(bridge?.bundlerTo) || !validBundlerVersion(bridge?.minimumBundler)) errors.push("bundlerBridge requires Ruby from/to and Bundler from/to/floor versions.");
+    // The researched floor is what justifies blocking the hop, so its provenance
+    // has to be recorded rather than asserted.
+    if (typeof bridge?.compatibilitySource !== "string" || !/^https:\/\//.test(bridge.compatibilitySource)) errors.push("bundlerBridge requires the official compatibility source.");
+    if (typeof bridge?.rationale !== "string" || !bridge.rationale) errors.push("bundlerBridge requires a rationale.");
+    if (!Array.isArray(bridge?.citations) || !bridge.citations.length || bridge.citations.some((citation) => !validCitation(citation))) errors.push("bundlerBridge requires HTTPS citations.");
   }
   for (const [index, iteration] of (run.iterations ?? []).entries()) {
     if (!validVersion(iteration?.from) || !validVersion(iteration?.to)) errors.push(`Iteration ${index + 1} requires Ruby from/to versions.`);
@@ -173,11 +212,61 @@ export function writeRun(root, relativePath, run) {
   const markdown = file.replace(/\.json$/, ".md");
   if (fs.existsSync(markdown) && (!fs.lstatSync(markdown).isFile() || fs.lstatSync(markdown).isSymbolicLink())) throw new RunStateError("Markdown evidence must be a regular file inside the worktree.", "unsafe-report-path");
   const safe = redact(run);
-  const target = safe.reportType === "rails_bridge" ? `- **Target Rails:** ${safe.targetRails}` : `- **Target Ruby:** ${safe.targetRuby}`;
-  const markdownBody = `# ${safe.title}\n\n- **Status:** ${safe.status}\n- **Phase:** ${safe.phase}\n${target}\n- **Started:** ${safe.startedAt}\n\n## Durable evidence\n\n\`\`\`json\n${JSON.stringify(safe, null, 2)}\n\`\`\`\n`;
+  const target = safe.reportType === "rails_bridge" ? `- **Target Rails:** ${safe.targetRails}` : safe.reportType === "bundler_bridge" ? `- **Target Bundler:** ${safe.targetBundler}` : `- **Target Ruby:** ${safe.targetRuby}`;
+  const followUps = followUpActions(safe);
+  const advisories = collectAdvisories(root, safe);
+  const followUpBlock = followUps.length
+    ? `\n## Follow-up actions\n\nThese are yours to take. Nothing below was verified by this run; the run cannot test your production topology.\n\n${followUps.map((item) => `- ${item}`).join("\n")}\n`
+    : "";
+  // Advisory only: never a gate. Rendered as its own section so it is obvious
+  // these are observations about the reader's infrastructure, not evidence the
+  // run collected about the app.
+  const advisoryBlock = advisories.length
+    ? `\n## Infrastructure review (advisory)\n\nRead-only observations about files this run did not change. Nothing here blocks the upgrade, and an intentional version pin that lags the app is legitimate. Confirm each against your actual deploy platform.\n\n| Area | Finding | Evidence | Basis |\n| --- | --- | --- | --- |\n${advisories.map((item) => `| ${item.area} | ${item.title}<br>${item.detail} | \`${item.evidence.replace(/\|/g, "\\|")}\` | ${item.confidence} |`).join("\n")}\n`
+    : "";
+  const markdownBody = `# ${safe.title}\n\n- **Status:** ${safe.status}\n- **Phase:** ${safe.phase}\n${target}\n- **Started:** ${safe.startedAt}\n${followUpBlock}${advisoryBlock}\n## Durable evidence\n\n\`\`\`json\n${JSON.stringify(safe, null, 2)}\n\`\`\`\n`;
   const markdownTemporary = path.join(path.dirname(markdown), `.${path.basename(markdown)}.${process.pid}.${crypto.randomUUID()}.tmp`);
   fs.writeFileSync(markdownTemporary, markdownBody, { mode: 0o600, flag: "wx" });
   fs.renameSync(markdownTemporary, markdown);
+}
+
+// Deployment-visible items a local test run provably cannot check. The isolated
+// runtime proves the code runs on the target Ruby in a container; it says nothing
+// about the host that will actually serve it. Each item is phrased as something
+// the reader must verify, never as something this run established, because a run
+// that "passed" here has not touched the real deploy target at all.
+function followUpActions(safe) {
+  const actions = [];
+  const last = safe.iterations?.at(-1);
+  if (last?.checkpointSha) actions.push(`Checkpoint \`${last.checkpointSha.slice(0, 7)}\` is validated locally but not deployed: push it and run your own staging check before it reaches production.`);
+  if (safe.phase === "blocked" || safe.status === "blocked") actions.push("This run is blocked. Resolve or explicitly approve the outstanding risks before treating the upgrade as complete.");
+  if (safe.frameworkBridge?.status === "approved") actions.push(`A Rails ${safe.frameworkBridge.railsFrom} → ${safe.frameworkBridge.railsTo} bridge was approved here but not performed. It needs its own separate run.`);
+  if (safe.bundlerBridge?.status === "approved") actions.push(`A Bundler ${safe.bundlerBridge.bundlerFrom} → ${safe.bundlerBridge.bundlerTo} bridge was approved here but not performed, on a researched floor of ${safe.bundlerBridge.minimumBundler}. Run \`begin-bundler-bridge\`, then restart the Ruby upgrade.`);
+  const environment = safe.environment;
+  if (environment?.type === "docker") {
+    // The single most common surprise: the container pins Bundler 2.4.22 and the
+    // app's own CI or deploy host may resolve a different one, changing which
+    // lockfile semantics apply.
+    actions.push(`The isolated runtime used Bundler ${environment.bundlerVersion ?? "a pinned version (unrecorded)"}${environment.bundlerVersion ? ` on Ruby ${environment.ruby}` : ""}. Confirm your deploy host and CI resolve the same Bundler version, or re-run \`bundle lock\` there.`);
+    actions.push(`Native gems were compiled for this container (${environment.database ?? "database"} on Ruby ${environment.ruby}). Rebuild native extensions on your deploy platform rather than copying \`node_modules\`-style build output.`);
+    actions.push(`Your deploy host must reach the real database directly; this run used an isolated ${environment.database} reachable only over a private Docker network and deliberately published no ports.`);
+    actions.push("Prepared containers and networks persist after the run by design. Remove them when you are done: `docker rm -f` and `docker network rm` on the names in `.ruby-upgrades/runtime.json`.");
+  }
+  actions.push("Review the validation receipts in `.ruby-upgrades/runs/` for the exact commands, exit codes, and test evidence before merging.");
+  return actions;
+}
+
+// Read the worktree's own infrastructure and compare it against what this run
+// changed. Wrapped because the report must still render when a worktree cannot
+// be inspected (an explicit `--report` from elsewhere, or a half-removed tree);
+// a missing advisory section must not fail a run whose evidence is already
+// recorded.
+export function collectAdvisories(root, safe) {
+  try {
+    return advisoryFindings({ root, run: safe, inventory: safe.inventory ?? {} });
+  } catch {
+    return [];
+  }
 }
 
 function lockPath(root) {

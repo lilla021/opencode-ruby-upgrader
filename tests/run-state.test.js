@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { acquireRunLock, readRun, releaseRunLock, RunStateError, validateRun, writeRun } from "../src/run-state.js";
+import { advisoryFindings } from "../src/advisory.js";
 
 const dockerEnvironment = () => ({ type: "docker", runId: "11111111-1111-4111-8111-111111111111", reportPath: ".ruby-upgrades/runs/run.json", name: "ruby-upgrader-11111111-1111-4111-8111-111111111111-app", id: "a".repeat(64), imageId: `sha256:${"b".repeat(64)}`, imageRef: "ruby:3.4.1", ruby: "3.4.1", database: "mysql", databaseContainer: "ruby-upgrader-11111111-1111-4111-8111-111111111111-mysql", databaseContainerId: "c".repeat(64), databaseImageId: `sha256:${"d".repeat(64)}`, databaseImageRef: "mysql:8.4", network: "ruby-upgrader-11111111-1111-4111-8111-111111111111-network", networkId: "e".repeat(64) });
 const dockerReceipt = (environment) => ({ receiptVersion: 2, id: "22222222-2222-4222-8222-222222222222", kind: "test", commandId: "docker-bundle-rspec", argv: ["docker", "exec"], ...(environment ? { environment } : {}), startedAt: "2026-09-09T00:00:00Z", finishedAt: "2026-09-09T00:00:01Z", durationMs: 1000, exitCode: 0, timedOut: false, output: { redactedSha256: "f".repeat(64), bytes: 10 }, worktree: { algorithm: "sha256", headSha: "1".repeat(40), diffSha256: "2".repeat(64) }, testEvidence: { passed: true } });
@@ -55,4 +56,52 @@ test("rejects malformed reports and symlinked evidence directories", (t) => {
   const report = { schemaVersion: 2, runId: "11111111-1111-4111-8111-111111111111", title: "Test", status: "in_progress", phase: "initialized", startedAt: "2026-09-09T00:00:00Z", targetRuby: "3.4", targetPinnedAt: "2026-09-09T00:00:00Z", research: { ladder: [], citations: [] }, riskDecisions: [], iterations: [] };
   assert.throws(() => writeRun(root, ".ruby-upgrades/runs/run.json", report), (error) => error instanceof RunStateError && error.code === "unsafe-report-path");
   assert.equal(fs.readdirSync(outside).length, 0);
+});
+
+// Advisory infrastructure findings. These describe the reader's own deploy and CI
+// setup, which an isolated container run provably cannot verify, so they are
+// reported with their evidence and never gate anything.
+test("report markdown separates follow-up actions from advisory infrastructure findings", (t) => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ruby-advisory-")));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, ".ruby-version"), "3.3.4\n");
+  fs.mkdirSync(path.join(root, ".github", "workflows"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".github", "workflows", "ci.yml"), 'jobs:\n  test:\n    steps:\n      - uses: ruby/setup-ruby@v1\n        with:\n          ruby-version: "3.3.4"\n');
+  fs.writeFileSync(path.join(root, "Gemfile.lock"), "GEM\n  specs:\n    rails (7.1.0)\n\nBUNDLED WITH\n   2.4.17\n");
+  const reportPath = ".ruby-upgrades/runs/advisory.json";
+  writeRun(root, reportPath, reportWith(dockerReceipt(dockerEnvironment())));
+  const markdown = fs.readFileSync(path.join(root, ".ruby-upgrades", "runs", "advisory.md"), "utf8");
+
+  assert.match(markdown, /## Follow-up actions/);
+  assert.match(markdown, /## Infrastructure review \(advisory\)/);
+  // A stale pin must be reported with the value it read, not as a bare warning.
+  assert.match(markdown, /\.ruby-version pins Ruby 3\.3\.4/);
+  assert.match(markdown, /Gemfile\.lock pins Bundler 2\.4\.17/);
+  // The advisory section must state its own limits rather than implying the run
+  // inspected the deploy platform.
+  assert.match(markdown, /Nothing here blocks the upgrade/);
+  // Findings stay advisory: the report still validates, so nothing can gate on them.
+  assert.equal(validateRun(JSON.parse(fs.readFileSync(path.join(root, ".ruby-upgrades", "runs", "advisory.json"), "utf8"))).valid, true);
+
+  // Same project after the pins are updated: the stale findings disappear.
+  fs.writeFileSync(path.join(root, ".ruby-version"), "3.4.1\n");
+  fs.writeFileSync(path.join(root, ".github", "workflows", "ci.yml"), 'jobs:\n  test:\n    steps:\n      - uses: ruby/setup-ruby@v1\n        with:\n          ruby-version: "3.4.1"\n');
+  writeRun(root, reportPath, reportWith(dockerReceipt(dockerEnvironment())));
+  const updated = fs.readFileSync(path.join(root, ".ruby-upgrades", "runs", "advisory.md"), "utf8");
+  assert.doesNotMatch(updated, /\.ruby-version pins Ruby/);
+  assert.doesNotMatch(updated, /does not test Ruby/);
+  assert.match(updated, /Gemfile\.lock pins Bundler 2\.4\.17/, "the Bundler note stays: it is a confirmation, not a detected defect");
+});
+
+test("advisory findings stay silent rather than guessing at unreadable config", (t) => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ruby-advisory-quiet-")));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  // No version files at all, and no lockfile: nothing to compare, so nothing to say.
+  const findings = advisoryFindings({ root, run: { targetRuby: "3.4.1" }, inventory: {} });
+  assert.equal(findings.length, 0);
+  // A Dockerfile whose base image cannot be read must not be reported as a
+  // version mismatch it never actually observed.
+  fs.writeFileSync(path.join(root, "Dockerfile"), "FROM my-registry.internal/ruby:latest\n");
+  const unparsed = advisoryFindings({ root, run: { targetRuby: "3.4.1" }, inventory: {} });
+  assert.equal(unparsed.some((finding) => finding.area === "version-pin" && finding.title.includes("pins Ruby")), false);
 });

@@ -4,6 +4,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { dashboardPage } from "./dashboard-page.js";
 import { readRun } from "./run-state.js";
+import { advisoryFindings } from "./advisory.js";
 
 const MAX_RUN_FILES = 250;
 const MAX_RUN_BYTES = 1024 * 1024;
@@ -53,8 +54,15 @@ export function startDashboard({ root = process.cwd(), port = 0 } = {}) {
       return response.end("Method not allowed");
     }
     if (request.url === "/api/runs") {
+      // Advisory findings are recomputed per request rather than stored in the
+      // report. They describe the worktree as it stands now, so a stale value in
+      // a historical run would be worse than no value at all.
+      const runs = readUpgradeRuns(root).map((run) => {
+        try { return { ...run, advisories: advisoryFindings({ root, run, inventory: run.inventory ?? {} }) }; }
+        catch { return { ...run, advisories: [] }; }
+      });
       response.writeHead(200, { ...securityHeaders, "content-type": "application/json; charset=utf-8" });
-      return response.end(JSON.stringify(readUpgradeRuns(root)));
+      return response.end(JSON.stringify(runs));
     }
     if (request.url === "/" || request.url === "/index.html") {
       response.writeHead(200, { ...securityHeaders, "content-type": "text/html; charset=utf-8" });

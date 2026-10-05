@@ -1,6 +1,6 @@
 {
   "name": "opencode-ruby-upgrader",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "A safe, evidence-driven Ruby runtime upgrade agent and local migration dashboard for OpenCode",
   "author": "Priscilla Cournoyer (https://github.com/lilla021)",
   "repository": {
@@ -26,9 +26,34 @@
   "allowScripts": {
     "opencode-ai@1.18.30": true
   },
-  "files": ["src", "agents", "bin", "docs/*.md", "README.md", "LICENSE", "SECURITY.md", "PRIVACY.md", "RELEASING.md", "RELEASE_CHECKLIST.md", "RELEASE_NOTES.md", "E2E_EVIDENCE.md"],
-  "keywords": ["opencode", "opencode-plugin", "ruby", "rails", "upgrade", "worktree", "migration"],
-  "engines": { "node": ">=22.5.0" },
+  "files": [
+    "src",
+    "agents",
+    "bin",
+    "docs/*.md",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md",
+    "PRIVACY.md",
+    "RELEASING.md",
+    "RELEASE_CHECKLIST.md",
+    "RELEASE_NOTES.md",
+    "E2E_EVIDENCE.md"
+  ],
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "ruby",
+    "rails",
+    "upgrade",
+    "worktree",
+    "migration"
+  ],
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "license": "MIT",
-  "publishConfig": { "access": "public" }
+  "publishConfig": {
+    "access": "public"
+  }
 }

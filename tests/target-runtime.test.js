@@ -55,6 +55,7 @@ test("prepares a labelled fixed Docker runtime and persists nonsecret metadata",
     if (args[0] === "inspect") return { status: 1, stdout: "" };
     if (args[0] === "run" && args.includes(runtime.appContainer)) appStarted = true;
     if (args.at(-2) === "ruby" && args.at(-1) === "--version") return { status: 0, stdout: "ruby 3.4.1p0\n" };
+    if (args.includes("bundle") && args.at(-1) === "--version") return { status: 0, stdout: "Bundler version 2.4.22\n" };
     return { status: 0, stdout: "bootstrap output", stderr: "" };
   };
   const prepared = prepareTargetRuntime({ root, ruby: "3.4.1", spawn });
@@ -62,7 +63,10 @@ test("prepares a labelled fixed Docker runtime and persists nonsecret metadata",
   assert.equal(prepared.database, "postgres");
   assert.equal(prepared.resolvedImageId, `sha256:${"a".repeat(64)}`);
   assert.equal(prepared.databaseImageId, `sha256:${"c".repeat(64)}`);
-  assert.deepEqual(Object.keys(prepared.preparation).sort(), ["bundleInstall", "bundler", "databaseCreate", "node", "rubyVersion"]);
+  // `bundlerVersion` is the attested banner the report uses to warn that a
+  // deploy host or CI may resolve a different Bundler than this container did.
+  assert.deepEqual(Object.keys(prepared.preparation).sort(), ["bundleInstall", "bundler", "bundlerVersion", "databaseCreate", "node", "rubyVersion"]);
+  assert.equal(prepared.preparation.bundlerVersion, "Bundler version 2.4.22");
   const persisted = JSON.parse(fs.readFileSync(path.join(root, ".ruby-upgrades", "runtime.json"), "utf8"));
   assert.deepEqual(persisted, prepared);
   assert.equal(JSON.stringify(persisted).includes("DATABASE_URL"), false);
@@ -97,6 +101,7 @@ test("docker RSpec reuses prepared runtime metadata without an environment varia
     if (args[0] === "inspect") return { status: 1, stdout: "" };
     if (args[0] === "run" && args.includes(runtime.appContainer)) appStarted = true;
     if (args.at(-2) === "ruby" && args.at(-1) === "--version") return { status: 0, stdout: "ruby 3.4.1p0\n" };
+    if (args.includes("bundle") && args.at(-1) === "--version") return { status: 0, stdout: "Bundler version 2.4.22\n" };
     return { status: 0, stdout: "1 example, 0 failures\nFinished in 0.1 seconds\n", stderr: "" };
   };
   prepareTargetRuntime({ root, ruby: "3.4.1", spawn });
@@ -132,6 +137,7 @@ test("preparation retry reuses a labelled app container before a manifest exists
     if (args[0] === "inspect" && args[1] === runtime.databaseContainer) return { status: 0, stdout: JSON.stringify([dockerFixture(root, runtime).database]) };
     if (args[0] === "inspect") return { status: 1, stdout: "" };
     if (args.at(-2) === "ruby" && args.at(-1) === "--version") return { status: 0, stdout: "ruby 3.4.1p0\n" };
+    if (args.includes("bundle") && args.at(-1) === "--version") return { status: 0, stdout: "Bundler version 2.4.22\n" };
     return { status: 0, stdout: "ok", stderr: "" };
   };
   prepareTargetRuntime({ root, ruby: "3.4.1", spawn });
@@ -171,6 +177,7 @@ test("preparation reuses and upgrades a legacy PostgreSQL runtime manifest", (t)
     }
     if (args[0] === "inspect") return { status: 1, stdout: "" };
     if (args.at(-2) === "ruby" && args.at(-1) === "--version") return { status: 0, stdout: "ruby 3.4.1p0\n" };
+    if (args.includes("bundle") && args.at(-1) === "--version") return { status: 0, stdout: "Bundler version 2.4.22\n" };
     return { status: 0, stdout: "ok", stderr: "" };
   };
 
@@ -332,6 +339,7 @@ test("prepares an isolated MySQL runtime from a project that declares mysql2", (
     if (args[0] === "inspect") return { status: 1, stdout: "" };
     if (args[0] === "run" && args.includes(runtime.appContainer)) appStarted = true;
     if (args.at(-2) === "ruby" && args.at(-1) === "--version") return { status: 0, stdout: "ruby 3.4.1p0\n" };
+    if (args.includes("bundle") && args.at(-1) === "--version") return { status: 0, stdout: "Bundler version 2.4.22\n" };
     return { status: 0, stdout: "bootstrap output", stderr: "" };
   };
   // No --database flag: the adapter is detected from the project's own gems.
@@ -369,6 +377,7 @@ test("an explicit --database overrides detection and is verified on every reuse"
     if (args[0] === "inspect") return { status: 1, stdout: "" };
     if (args[0] === "run" && args.includes(runtime.appContainer)) appStarted = true;
     if (args.at(-2) === "ruby" && args.at(-1) === "--version") return { status: 0, stdout: "ruby 3.4.1p0\n" };
+    if (args.includes("bundle") && args.at(-1) === "--version") return { status: 0, stdout: "Bundler version 2.4.22\n" };
     return { status: 0, stdout: "1 example, 0 failures\nFinished in 0.1 seconds\n", stderr: "" };
   };
   const prepared = prepareTargetRuntime({ root, ruby: "3.4.1", database: "mysql", spawn });
@@ -401,6 +410,7 @@ test("switching the database adapter replaces an interrupted app container witho
     if (args[0] === "run" && args.includes(current.appContainer)) { appStarted = true; appRuntime = current; }
     if (args[0] === "rm" && args.includes(postgres.appContainer)) appStarted = false;
     if (args.at(-2) === "ruby" && args.at(-1) === "--version") return { status: 0, stdout: "ruby 3.4.1p0\n" };
+    if (args.includes("bundle") && args.at(-1) === "--version") return { status: 0, stdout: "Bundler version 2.4.22\n" };
     return { status: 0, stdout: "ok", stderr: "" };
   };
   prepareTargetRuntime({ root, ruby: "3.4.1", database: "postgres", spawn });
@@ -438,6 +448,7 @@ test("switching engines removes an owned old database even when the app is absen
     if (args[0] === "run" && args.includes(mysql.databaseContainer)) mysqlExists = true;
     if (args[0] === "run" && args.includes(mysql.appContainer)) appExists = true;
     if (args.at(-2) === "ruby" && args.at(-1) === "--version") return { status: 0, stdout: "ruby 3.4.1p0\n" };
+    if (args.includes("bundle") && args.at(-1) === "--version") return { status: 0, stdout: "Bundler version 2.4.22\n" };
     return { status: 0, stdout: "ok", stderr: "" };
   };
   prepareTargetRuntime({ root, ruby: "3.4.1", database: "mysql", spawn });
@@ -484,6 +495,7 @@ test("preparation replaces stopped owned app and database containers", (t) => {
     if (args[0] === "run" && args.includes(runtime.appContainer)) { appExists = true; appRunning = true; }
     if (args[0] === "run" && args.includes(runtime.databaseContainer)) { databaseExists = true; databaseRunning = true; }
     if (args.at(-2) === "ruby" && args.at(-1) === "--version") return { status: 0, stdout: "ruby 3.4.1p0\n" };
+    if (args.includes("bundle") && args.at(-1) === "--version") return { status: 0, stdout: "Bundler version 2.4.22\n" };
     return { status: 0, stdout: "ok", stderr: "" };
   };
 
