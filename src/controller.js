@@ -333,14 +333,13 @@ export function resumeRun({ root = process.cwd(), reportPath, continueAfterHop =
   const run = readRun(root, reportPath);
   if (run.status === "complete") throw new Error("This run is complete; start a new run instead.");
   if ((run.frameworkBridge || run.bundlerBridge) && run.phase === "blocked") throw new Error("This Ruby run is blocked by an approved compatibility bridge and cannot resume. Complete the linked bridge, then begin a fresh Ruby run.");
-  if (run.phase === "paused" && !transitions.paused.includes(run.resumePhase)) throw new Error("Paused run has no safe resume phase.");
+  if (run.phase !== "paused") throw new Error("Cannot resume a run that is not paused. If the lock is stale, use recovery (release-lock --force) after verifying no other process owns the worktree.");
+  if (!transitions.paused.includes(run.resumePhase)) throw new Error("Paused run has no safe resume phase.");
   if (run.control.stopAfterHop && run.iterations.length >= 1 && run.resumePhase === "committed" && !continueAfterHop) throw new Error("This run stopped after its requested hop. Resume with explicit --continue-after-hop only after user review.");
   if (continueAfterHop) run.control.stopAfterHop = false;
   const lock = acquireRunLock(root, reportPath); run.lockNonce = lock.nonce;
   try {
-   if (run.phase === "paused") {
     run.phase = run.resumePhase; run.status = "in_progress"; delete run.resumePhase; writeRun(root, reportPath, run);
-   }
   } catch (error) { releaseRunLock(root, reportPath, lock.nonce); throw error; }
   return { lock, run: readRun(root, reportPath) };
 }
