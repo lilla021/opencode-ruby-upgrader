@@ -30,7 +30,6 @@
     "src",
     "agents",
     "bin",
-    "docs/*.md",
     "README.md",
     "LICENSE",
     "SECURITY.md",
@@ -38,7 +37,9 @@
     "RELEASING.md",
     "RELEASE_CHECKLIST.md",
     "RELEASE_NOTES.md",
-    "E2E_EVIDENCE.md"
+    "E2E_EVIDENCE.md",
+    "docs/bundler-bridge.md",
+    "docs/rails-bridge.md"
   ],
   "keywords": [
     "opencode",
