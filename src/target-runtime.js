@@ -310,8 +310,23 @@ export function validateTargetRuntime({ root = process.cwd(), runtime = readTarg
   const network = inspectNetwork(spawn, runtime.network, "Target runtime Docker network is unavailable. Rerun prepare-target-runtime --ruby <x.y.z>.");
   const env = environment(app);
   const connectedIds = Object.keys(network?.Containers ?? {}).sort();
-  const expectedIds = [app?.Id, database?.Id].sort();
-  const valid = appMatches(app, canonical, runtime, db) && databaseMatches(database, runtime, db) && hasOwnership(network, owner) && hasOwnership(app, owner) && hasOwnership(database, owner) && connectedIds.length === 2 && connectedIds.every((id, index) => id === expectedIds[index]) && app?.Image === runtime.resolvedImageId && (!runtime.databaseImageId || database?.Image === runtime.databaseImageId) && env.RAILS_ENV === "test" && env.DATABASE_URL === db.databaseUrl(runtime.databaseContainer);
+  const serviceContainers = [];
+  const runtimeServices = runtime.services || [];
+  for (const svc of runtimeServices) {
+    try {
+      const sc = inspect(spawn, svc.container, "Target service container is unavailable. Rerun prepare-target-runtime --ruby <x.y.z>.");
+      serviceContainers.push(sc);
+    } catch (e) {
+      throw e;
+    }
+  }
+  const expectedIds = [app?.Id, database?.Id, ...serviceContainers.map((c) => c.Id)].filter(Boolean).sort();
+  const valid = appMatches(app, canonical, runtime, db) && databaseMatches(database, runtime, db) &&
+    hasOwnership(network, owner) && hasOwnership(app, owner) && hasOwnership(database, owner) &&
+    serviceContainers.every((c) => hasOwnership(c, owner)) &&
+    connectedIds.length === expectedIds.length && connectedIds.every((id, index) => id === expectedIds[index]) &&
+    app?.Image === runtime.resolvedImageId && (!runtime.databaseImageId || database?.Image === runtime.databaseImageId) &&
+    env.RAILS_ENV === "test" && env.DATABASE_URL === db.databaseUrl(runtime.databaseContainer);
   if (!valid) throw new Error("Target runtime no longer matches its prepared run. Rerun prepare-target-runtime --ruby <x.y.z>.");
   // bundlerVersion is surfaced so the generated report can warn that the deploy
   // host and CI may resolve a different Bundler than this container pinned. It

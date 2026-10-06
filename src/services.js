@@ -44,8 +44,8 @@ export const services = Object.freeze({
     startArgs: () => ["--shm-size=2g", "selenium/standalone-chrome:latest"],
     readyArgs: (container) => ["exec", container, "curl", "-s", "--fail", "http://localhost:4444/wd/hub/status"],
     env: ({ container }) => ({
-      SELENIUM_URL: "http://chrome:4444/wd/hub",
-      CHROME_REMOTE_URL: "http://chrome:4444",
+      SELENIUM_URL: `http://${container}:4444/wd/hub`,
+      CHROME_REMOTE_URL: `http://${container}:4444`,
       CAPYBARA_SERVER_HOST: "0.0.0.0"
     }),
     ensureReady: ({ probe }) => readyLoop({ probe, attempts: 120, label: "Chrome" })
@@ -58,8 +58,8 @@ export const services = Object.freeze({
     startArgs: () => ["--shm-size=2g", "selenium/standalone-chrome:latest"],
     readyArgs: (container) => ["exec", container, "curl", "-s", "--fail", "http://localhost:4444/wd/hub/status"],
     env: ({ container }) => ({
-      SELENIUM_URL: "http://selenium:4444/wd/hub",
-      CHROME_REMOTE_URL: "http://selenium:4444",
+      SELENIUM_URL: `http://${container}:4444/wd/hub`,
+      CHROME_REMOTE_URL: `http://${container}:4444`,
       CAPYBARA_SERVER_HOST: "0.0.0.0"
     }),
     ensureReady: ({ probe }) => readyLoop({ probe, attempts: 120, label: "Selenium" })
