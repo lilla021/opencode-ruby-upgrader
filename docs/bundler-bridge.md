@@ -47,6 +47,8 @@ The bridge records the floor, the rationale, the citation, and the compatibility
 
 Approval is refused when the recorded pin already clears the floor. Blocking a hop that the pin already satisfies would be wrong as often as it is right.
 
+For Bundler compatibility and commands, consult official sources: [Bundler command reference](https://guides.rubygems.org/command-reference/bundle/) and [Bundler on GitHub](https://github.com/rubygems/bundler). Verify gem dependencies against [RubyGems.org](https://rubygems.org/) and [Rails Guides](https://guides.rubyonrails.org/) when relevant; prefer official gem documentation when available.
+
 ### 2. Begin the separate bridge run
 
 ```bash
@@ -63,7 +65,7 @@ opencode-ruby-upgrader record-bundler-research --report <bridge>.json \
   --citation "Bundler compatibility with Ruby|https://guides.rubygems.org/bundler-compatibility/"
 ```
 
-The ladder must begin at the recorded `BUNDLED WITH` pin and advance one series at a time. A direct **2.7 → 4.0** hop is valid because Bundler never had a 3.x series; without that boundary rule a project on 2.4 could never reach 4.0 through a reviewed ladder.
+The ladder must begin at the recorded `BUNDLED WITH` pin and advance one series at a time (each step is its own hop recorded with `record-executed-bundler-iteration`). A direct **2.7 → 4.0** hop is valid because Bundler never had a 3.x series; without that boundary rule a project on 2.4 could never reach 4.0 through a reviewed ladder. The bridge runs stepwise to the researched target Bundler.
 
 ### 4. Raise the pin and validate
 
