@@ -45,6 +45,8 @@ opencode-ruby-upgrader transition --report <run>.json --phase blocked
 
 The bridge records the floor, the rationale, the citation, and the compatibility source URL. The Ruby run becomes **terminal**: it cannot be resumed, because resuming would skip the prerequisite change and leave the project on a Bundler that cannot run the target Ruby.
 
+Before approving the bridge, present the user with candidate Bundler targets that satisfy the researched minimum (minimum required, a conservative intermediate, latest stable in the relevant line), each with rationale and citations from official sources. Ask the user to choose a target; record that target as `bundlerTo` and ensure it is >= minimum. The ladder must end at the user-chosen researched target.
+
 Approval is refused when the recorded pin already clears the floor. Blocking a hop that the pin already satisfies would be wrong as often as it is right.
 
 For Bundler compatibility and commands, consult official sources: [Bundler command reference](https://guides.rubygems.org/command-reference/bundle/) and [Bundler on GitHub](https://github.com/rubygems/bundler). Verify gem dependencies against [RubyGems.org](https://rubygems.org/) and [Rails Guides](https://guides.rubyonrails.org/) when relevant; prefer official gem documentation when available.
@@ -65,7 +67,7 @@ opencode-ruby-upgrader record-bundler-research --report <bridge>.json \
   --citation "Bundler compatibility with Ruby|https://guides.rubygems.org/bundler-compatibility/"
 ```
 
-The ladder must begin at the recorded `BUNDLED WITH` pin and advance one series at a time (each step is its own hop recorded with `record-executed-bundler-iteration`). A direct **2.7 → 4.0** hop is valid because Bundler never had a 3.x series; without that boundary rule a project on 2.4 could never reach 4.0 through a reviewed ladder. The bridge runs stepwise to the researched target Bundler.
+The ladder must begin at the recorded `BUNDLED WITH` pin and advance one series at a time (each step is its own hop recorded with `record-executed-bundler-iteration`). Research once with the full contiguous ladder to the **user-chosen researched target**, then execute each hop sequentially in order until you reach the final ladder element. A direct **2.7 → 4.0** hop is valid because Bundler never had a 3.x series; without that boundary rule a project on 2.4 could never reach 4.0 through a reviewed ladder. The bridge runs stepwise to the researched target Bundler.
 
 ### 4. Raise the pin and validate
 
@@ -77,6 +79,10 @@ opencode-ruby-upgrader record-executed-bundler-iteration --report <bridge>.json 
 ```
 
 This is where a Bundler bridge differs from a Rails bridge. A Rails hop produces a reviewable `app:update` receipt; a Bundler hop produces a **file change**, and a lockfile edit is weak evidence — anyone can hand-write `BUNDLED WITH 2.5.22`.
+
+
+
+Inspect deprecation warnings in validation receipts (test output) between hops. Address them if they cause failures; otherwise record them as evidence/follow-ups in research notes.
 
 So the hop is accepted only when **two independent facts agree**:
 
