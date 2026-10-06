@@ -35,7 +35,18 @@ export function executeValidation({ root = process.cwd(), inventory, commandId, 
   if (!definition) throw new Error("Unknown validation command ID.");
   if (definition.kind === "rails_app_update" ? inventory.framework !== "rails" : !inventory.recommendedCommands.includes(definition.expected)) throw new Error("Validation command is not supported by this project's detected adapter.");
   const environment = definition.docker ? { type: "docker", ...dockerContainer(root, spawn, expectedRuntime) } : undefined;
-  const argv = definition.docker ? ["docker", "exec", "--env", "DATABASE_CLEANER_ALLOW_REMOTE_DATABASE_URL=true", environment.name, ...definition.argv] : definition.argv;
+  let args = [...definition.argv];
+  if (definition.docker && definition.commandId === "docker-bundle-rspec") {
+    try {
+      const runtime = readTargetRuntime(root);
+      const hasBrowser = Array.isArray(runtime?.services) && runtime.services.some((s) => s.type === "chrome" || s.type === "selenium");
+      if (!hasBrowser) {
+        // Skip js/system specs by default when no browser is provisioned in isolated runtime
+        args = [...definition.argv, "--tag", "~js", "--tag", "~system"];
+      }
+    } catch {}
+  }
+  const argv = definition.docker ? ["docker", "exec", "--env", "DATABASE_CLEANER_ALLOW_REMOTE_DATABASE_URL=true", environment.name, ...args] : args;
   const startedAt = new Date().toISOString(); const started = Date.now();
   const result = spawn(argv[0], argv.slice(1), { cwd: root, shell: false, encoding: "utf8", timeout: timeoutMs, maxBuffer: 256 * 1024 });
   const output = redact(`${result.stdout ?? ""}${result.stderr ?? ""}`).slice(0, 8192);
