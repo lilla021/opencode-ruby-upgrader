@@ -191,13 +191,20 @@ export function prepareTargetRuntime({ root = process.cwd(), reportPath, ruby, d
   const runtime = { version: 2, runId: selected.run.runId, reportPath: selected.reportPath, ruby, database: db.adapter, bundlerToInstall, services: [], ...runtimeNames };
   const owner = identity(runtime.runId, canonical);
   const existing = readTargetRuntime(canonical);
+  let forceRecreateApp = false;
   if (existing && existing.runId !== runtime.runId) {
     const prior = readRun(canonical, existing.reportPath);
     if (!["blocked", "complete"].includes(prior.status)) throw new Error("Target runtime metadata belongs to another resumable run. Pause and resolve that run before preparing this one.");
+  } else if (existing && bundler && bundlerVersion.test(bundler) && existing.bundlerToInstall !== bundler) {
+    forceRecreateApp = true;
   }
 
   const databaseNames = [...new Set([...Object.values(databases).map((candidate) => names(runtime.runId, candidate).databaseContainer), existing?.databaseContainer].filter(Boolean))];
   let app = docker(spawn, ["inspect", runtime.appContainer]);
+  if (forceRecreateApp && app.status === 0) {
+    if (docker(spawn, ["rm", "--force", runtime.appContainer]).status !== 0) throw new Error("Could not replace the prior target Ruby app container.");
+    app = { status: 1 };
+  }
   let network = docker(spawn, ["network", "inspect", runtime.network]);
   const databaseInspections = new Map(databaseNames.map((name) => [name, docker(spawn, ["inspect", name])]));
   const serviceNames = serviceList.map((svc) => runtimeNames[`${svc.type}Container`]).filter(Boolean);
