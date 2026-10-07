@@ -14,7 +14,7 @@ const options = (name) => args.flatMap((argument, index) => argument === name &&
 const reportOption = () => option("--report");
 const citation = (value) => { const [title, url] = (value ?? "").split("|"); return { title, url }; };
 const usage = "Usage: opencode-ruby-upgrader <preflight|dashboard|begin|begin-rails-bridge|begin-bundler-bridge|prepare-target-runtime|status|transition|record-research|record-rails-research|record-bundler-research|record-risk|record-framework-bridge|record-bundler-bridge|record-executed-iteration|record-executed-rails-iteration|record-executed-bundler-iteration|discard-pending-app-update|discard-last-rails-iteration|record-dependency-review|inventory|supply-chain|git-capabilities|commit-hop|commit-rails-hop|commit-bundler-hop|resume|release-lock> [--help]";
-const prepareRuntimeHelp = `Usage: opencode-ruby-upgrader prepare-target-runtime --ruby <x.y.z> [--database postgres|mysql] [--report .ruby-upgrades/runs/<run>.json]
+const prepareRuntimeHelp = `Usage: opencode-ruby-upgrader prepare-target-runtime --ruby <x.y.z> [--database postgres|mysql] [--report .ruby-upgrades/runs/<run>.json] [--bundler <x.y.z>]`
 
 Prepares an isolated, run-bound Docker runtime. The database is detected from mysql2/PostgreSQL project declarations; absent evidence defaults to PostgreSQL, while conflicting evidence requires --database. Use --database only to override detection deliberately.`;
 if (command === "prepare-target-runtime" && args.includes("--help")) {
@@ -43,8 +43,8 @@ if (command === "prepare-target-runtime" && args.includes("--help")) {
   catch (error) { console.error(`Bundler bridge start blocked: ${error.message}`); process.exitCode = 1; }
 } else if (command === "prepare-target-runtime") {
   try {
-    if (!option("--ruby")) throw new Error("Usage: prepare-target-runtime --ruby <x.y.z> [--database postgres|mysql] [--report .ruby-upgrades/runs/<run>.json]");
-    console.log(JSON.stringify(prepareTargetRuntime({ ruby: option("--ruby"), database: option("--database"), reportPath: option("--report") }), null, 2));
+    if (!option("--ruby")) throw new Error("Usage: prepare-target-runtime --ruby <x.y.z> [--database postgres|mysql] [--report .ruby-upgrades/runs/<run>.json] [--bundler <x.y.z>]");
+    console.log(JSON.stringify(prepareTargetRuntime({ ruby: option("--ruby"), database: option("--database"), reportPath: option("--report"), bundler: option("--bundler") }), null, 2));
   } catch (error) { console.error(`Target runtime preparation blocked: ${error.message}`); process.exitCode = 1; }
 } else if (command === "status") {
   try {

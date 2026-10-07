@@ -71,7 +71,7 @@ The ladder must begin at the recorded `BUNDLED WITH` pin and advance one series 
 
 ### 4. Raise the pin and validate
 
-Rewrite the pin inside the isolated runtime, then record the hop:
+For each hop in a multi-series ladder, re-prepare the isolated target runtime with the hop's Bundler version (`prepare-target-runtime --ruby <x.y.z> --report <bridge>.json --bundler <hop-target>`) so the runtime attestation matches the hop target. Rewrite the pin inside the isolated runtime, then record the hop:
 
 ```bash
 opencode-ruby-upgrader record-executed-bundler-iteration --report <bridge>.json \

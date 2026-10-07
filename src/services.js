@@ -119,8 +119,9 @@ export function detectServices(root = process.cwd()) {
     REDIS_LOCK_SIDEKIQ.test(lock) ||
     REDIS_LOCK_RESQUE.test(lock);
   if (hasRedis) services.push("redis");
-  const hasChrome = /driven_by\s*:\s*(?:selenium|cuprite|chrome)/i.test(text) ||
-    /selenium-webdriver|cuprite|capybara/i.test(text + lock);
+  const hasChrome = /driven_by\s*:\s*(?:selenium|cuprite|chrome|apparition)/i.test(text) ||
+    /selenium-webdriver|cuprite|apparition|webdrivers/i.test(text + lock) ||
+    /js:\s*true|:js|:type\s*=>\s*:system|:type\s*=>\s*:feature/i.test(text + lock);
   if (hasChrome) services.push("chrome");
   // De-duplicate while preserving order
   return [...new Set(services)];

@@ -178,7 +178,7 @@ export function readTargetRuntime(root = process.cwd()) {
   } catch { throw new Error("Target runtime metadata is invalid. Rerun prepare-target-runtime --ruby <x.y.z>."); }
 }
 
-export function prepareTargetRuntime({ root = process.cwd(), reportPath, ruby, database, spawn = spawnSync }) {
+export function prepareTargetRuntime({ root = process.cwd(), reportPath, ruby, database, bundler, spawn = spawnSync }) {
   if (!rubyVersion.test(ruby ?? "")) throw new Error("--ruby must be an exact numeric Ruby version such as 3.4.1.");
   const canonical = canonicalRoot(root);
   const db = resolveDatabase(database ?? detectDatabase(canonical));
@@ -186,7 +186,7 @@ export function prepareTargetRuntime({ root = process.cwd(), reportPath, ruby, d
   const serviceList = resolveServices(detectedServices);
   const selected = selectedRun(canonical, reportPath);
   const run = readRun(canonical, selected.reportPath);
-  const bundlerToInstall = run.reportType === "bundler_bridge" ? run.targetBundler : (run.bundlerBridge ? run.bundlerBridge.bundlerTo : undefined) || "2.4.22";
+  let bundlerToInstall = bundler || (run.reportType === "bundler_bridge" ? run.targetBundler : (run.bundlerBridge ? run.bundlerBridge.bundlerTo : undefined)) || "2.4.22";
   const runtimeNames = names(selected.run.runId, db, serviceList);
   const runtime = { version: 2, runId: selected.run.runId, reportPath: selected.reportPath, ruby, database: db.adapter, bundlerToInstall, services: [], ...runtimeNames };
   const owner = identity(runtime.runId, canonical);
